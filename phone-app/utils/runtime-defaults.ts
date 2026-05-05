@@ -1,4 +1,4 @@
-import type { AppServerModel } from "@/types/app-server";
+import type { AppServerModel, AppUserInput } from "@/types/app-server";
 import type { AppServerConfigBatchWriteRequest } from "@/types/app-server";
 
 export const RUNTIME_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -113,18 +113,18 @@ export function buildThreadStartPayload({
 
 export function buildTurnStartPayload({
   threadId,
-  text,
+  input,
   cwd,
   runtime,
 }: {
   threadId: string;
-  text: string;
+  input: AppUserInput[];
   cwd?: string | null;
   runtime: RuntimeDefaults;
 }) {
   return {
     threadId,
-    input: [{ type: "text", text, text_elements: [] }],
+    input,
     cwd: cwd ?? null,
     approvalPolicy: runtime.approvalPolicy,
     sandboxPolicy: buildSandboxPolicy(runtime.sandbox, cwd ?? null),

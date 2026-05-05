@@ -44,6 +44,8 @@ const APP_SERVER_REQUEST_TIMEOUT_MS = 30000;
 const APP_SERVER_INITIALIZE_TIMEOUT_MS = 60000;
 const APP_SERVER_CONNECT_TIMEOUT_MS = 10000;
 
+type TurnInput = string | AppUserInput[];
+
 function toAppServerWsUrl(baseUrl: string, token: string) {
   const normalized = normalizeGatewayUrl(baseUrl);
   const url = normalized.startsWith("https://")
@@ -293,31 +295,32 @@ export class AppServerClient {
 
   async startTurn(
     threadId: string,
-    text: string,
+    input: TurnInput,
     options?: { cwd?: string | null; runtime?: RuntimeDefaults | null },
   ) {
+    const normalizedInput = normalizeTurnInput(input);
     return (await this.request(
       "turn/start",
       options?.runtime
         ? buildTurnStartPayload({
             threadId,
-            text,
+            input: normalizedInput,
             cwd: options.cwd,
             runtime: options.runtime,
           })
         : {
             threadId,
-            input: [textInput(text)],
+            input: normalizedInput,
             approvalPolicy: "on-request",
           },
     )) as AppTurnStartResponse;
   }
 
-  async steerTurn(threadId: string, turnId: string, text: string) {
+  async steerTurn(threadId: string, turnId: string, input: TurnInput) {
     return (await this.request("turn/steer", {
       threadId,
       expectedTurnId: turnId,
-      input: [textInput(text)],
+      input: normalizeTurnInput(input),
     })) as AppTurnSteerResponse;
   }
 
@@ -641,6 +644,10 @@ export function textInput(text: string): AppUserInput {
     text,
     text_elements: [],
   };
+}
+
+function normalizeTurnInput(input: TurnInput) {
+  return typeof input === "string" ? [textInput(input)] : input;
 }
 
 export class CreatedThreadError extends Error {

@@ -120,7 +120,7 @@ test("thread start payload includes model, reasoning config, approval, sandbox, 
 test("turn start payload includes runtime overrides with workspace-write sandbox policy", () => {
   const payload = buildTurnStartPayload({
     threadId: "thread-1",
-    text: "continue",
+    input: [{ type: "text", text: "continue", text_elements: [] }],
     cwd: "C:\\repo",
     runtime: {
       model: "gpt-5.5",
