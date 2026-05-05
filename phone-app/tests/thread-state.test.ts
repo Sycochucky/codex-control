@@ -7,6 +7,7 @@ import {
   appendItemTextDelta,
   findActiveTurnId,
   mergeTurnIntoThread,
+  replaceThreadWithSnapshot,
   upsertTurnItem,
 } from "../utils/thread-state";
 
@@ -103,6 +104,45 @@ test("mergeTurnIntoThread replaces completed turns without losing position", () 
   assert.equal(next.turns[0]?.status, "completed");
   assert.equal(next.turns[0]?.items[0]?.id, "agent-1");
   assert.equal(next.turns[1]?.id, "turn-2");
+});
+
+test("replaceThreadWithSnapshot accepts a fresh read of the same thread", () => {
+  const current = createThread({
+    id: "thread-1",
+    updatedAt: 1,
+    turns: [
+      {
+        id: "turn-1",
+        status: "inProgress",
+        error: null,
+        items: [{ type: "userMessage", id: "user-1", content: [{ type: "text", text: "old", text_elements: [] }] }],
+      },
+    ],
+  });
+  const refreshed = createThread({
+    id: "thread-1",
+    updatedAt: 2,
+    turns: [
+      {
+        id: "turn-1",
+        status: "completed",
+        error: null,
+        items: [{ type: "agentMessage", id: "agent-1", text: "fresh", phase: null }],
+      },
+    ],
+  });
+
+  const next = replaceThreadWithSnapshot(current, refreshed);
+  assert.equal(next.updatedAt, 2);
+  assert.equal(next.turns[0]?.status, "completed");
+  assert.equal(next.turns[0]?.items[0]?.id, "agent-1");
+});
+
+test("replaceThreadWithSnapshot ignores a read for a different thread", () => {
+  const current = createThread({ id: "thread-1", updatedAt: 1 });
+  const refreshed = createThread({ id: "thread-2", updatedAt: 2 });
+
+  assert.equal(replaceThreadWithSnapshot(current, refreshed), current);
 });
 
 function createThread(overrides: Partial<AppThread>): AppThread {
