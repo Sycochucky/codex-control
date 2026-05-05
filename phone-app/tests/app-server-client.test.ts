@@ -301,6 +301,67 @@ test("AppServerClient accepts App Server responses without a jsonrpc field", asy
   }
 });
 
+test("AppServerClient advertises experimental API capability during initialize", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets: FakeWebSocket[] = [];
+  const sent: Array<{ id?: string | number; method?: string; params?: Record<string, unknown> }> = [];
+
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly url: string;
+    readyState = FakeWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((event: { reason?: string }) => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+
+    send(payload: string) {
+      const parsed = JSON.parse(payload) as { id?: string | number; method?: string; params?: Record<string, unknown> };
+      sent.push(parsed);
+      if (parsed.method === "initialize" && parsed.id !== undefined) {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+      }
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ reason: "" });
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+  try {
+    const client = new AppServerClient("http://127.0.0.1:8000", "token");
+    const socket = sockets[0];
+    assert.ok(socket);
+
+    const connectPromise = client.connect();
+    socket.open();
+    await connectPromise;
+
+    assert.deepEqual(sent.find((entry) => entry.method === "initialize")?.params?.capabilities, {
+      experimentalApi: true,
+    });
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
 test("AppServerClient rejects pending requests on malformed JSON", async () => {
   const originalWebSocket = globalThis.WebSocket;
   const sockets: FakeWebSocket[] = [];
@@ -457,6 +518,120 @@ test("startThread surfaces the created thread id when follow-up setup fails", as
         error.threadId === "created-thread" &&
         /rename failed/i.test(error.message),
     );
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("startThread sends create, rename, and first turn requests", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets: FakeWebSocket[] = [];
+  const sent: Array<{ id?: string | number; method?: string; params?: Record<string, unknown> }> = [];
+
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly url: string;
+    readyState = FakeWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((event: { reason?: string }) => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+
+    send(payload: string) {
+      const parsed = JSON.parse(payload) as { id?: string | number; method?: string; params?: Record<string, unknown> };
+      sent.push(parsed);
+      if (parsed.id === undefined || !parsed.method) {
+        return;
+      }
+
+      if (parsed.method === "initialize") {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+        return;
+      }
+
+      if (parsed.method === "thread/start") {
+        this.onmessage?.({
+          data: JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id,
+            result: {
+              thread: createThread({ id: "created-thread", updatedAt: 10 }),
+              model: "gpt-5.4",
+              modelProvider: "openai",
+              serviceTier: null,
+              cwd: "D:\\DevProjects\\codex-app-syco",
+              approvalPolicy: "on-request",
+              sandbox: "workspace-write",
+              reasoningEffort: null,
+            },
+          }),
+        });
+        return;
+      }
+
+      if (parsed.method === "thread/name/set") {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+        return;
+      }
+
+      if (parsed.method === "turn/start") {
+        this.onmessage?.({
+          data: JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id,
+            result: { turn: { id: "turn-1", status: "inProgress", error: null, items: [] } },
+          }),
+        });
+      }
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ reason: "" });
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+  try {
+    const client = new AppServerClient("http://127.0.0.1:8000", "token");
+    const socket = sockets[0];
+    assert.ok(socket);
+
+    const connectPromise = client.connect();
+    socket.open();
+    await connectPromise;
+
+    const threadId = await client.startThread({
+      title: "Phone task",
+      initialMessage: "Run the mobile smoke",
+      cwd: "D:\\DevProjects\\codex-app-syco",
+    });
+
+    assert.equal(threadId, "created-thread");
+    assert.deepEqual(
+      sent
+        .filter((entry) => entry.id !== undefined && entry.method && entry.method !== "initialize")
+        .map((entry) => entry.method),
+      ["thread/start", "thread/name/set", "turn/start"],
+    );
+    assert.equal(sent.find((entry) => entry.method === "thread/name/set")?.params?.threadId, "created-thread");
+    assert.equal(sent.find((entry) => entry.method === "thread/name/set")?.params?.name, "Phone task");
+    assert.equal(sent.find((entry) => entry.method === "turn/start")?.params?.threadId, "created-thread");
   } finally {
     globalThis.WebSocket = originalWebSocket;
   }

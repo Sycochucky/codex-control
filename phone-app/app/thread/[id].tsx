@@ -11,7 +11,7 @@ import type { ThemeColors } from "@/constants/theme";
 import { useRuntimeDefaults } from "@/services/runtime-defaults-context";
 import { useSession } from "@/services/session-context";
 import { useThemedStyles } from "@/services/theme-context";
-import type { AppServerModel, AppServerNotification, AppServerRequest, AppThread, AppThreadItem, AppTurn } from "@/types/app-server";
+import type { AppServerModel, AppServerNotification, AppServerRequest, AppThread, AppThreadItem } from "@/types/app-server";
 import type { TaskEventRead } from "@/types/api";
 import {
   describeAppThreadItem,
@@ -36,6 +36,9 @@ import {
 import {
   appendCommandOutputDelta,
   appendItemTextDelta,
+  findActiveTurnId,
+  mergeTurnIntoThread,
+  upsertTurn,
   upsertTurnItem,
 } from "@/utils/thread-state";
 
@@ -227,12 +230,15 @@ export default function ThreadDetailScreen() {
       setIsSubmitting(true);
       setError(null);
       if (activeTurnId && waitingOnInput) {
-        await clientRef.current.steerTurn(threadId, activeTurnId, reply.trim());
+        const result = await clientRef.current.steerTurn(threadId, activeTurnId, reply.trim());
+        setActiveTurnId(result.turnId);
       } else {
-        await clientRef.current.startTurn(threadId, reply.trim(), {
+        const result = await clientRef.current.startTurn(threadId, reply.trim(), {
           cwd: thread?.cwd,
           runtime: showReplyRuntime ? getReplyRuntimeForRequest() : undefined,
         });
+        setThread((current) => (current ? mergeTurnIntoThread(current, result.turn) : current));
+        setActiveTurnId(result.turn.id);
       }
       setReply("");
     } catch (error) {
@@ -252,12 +258,15 @@ export default function ThreadDetailScreen() {
       setError(null);
       const prompt = "Continue from the current context and provide the next concrete result.";
       if (activeTurnId && waitingOnInput) {
-        await clientRef.current.steerTurn(threadId, activeTurnId, prompt);
+        const result = await clientRef.current.steerTurn(threadId, activeTurnId, prompt);
+        setActiveTurnId(result.turnId);
       } else {
-        await clientRef.current.startTurn(threadId, prompt, {
+        const result = await clientRef.current.startTurn(threadId, prompt, {
           cwd: thread?.cwd,
           runtime: showReplyRuntime ? getReplyRuntimeForRequest() : undefined,
         });
+        setThread((current) => (current ? mergeTurnIntoThread(current, result.turn) : current));
+        setActiveTurnId(result.turn.id);
       }
     } catch (error) {
       setError(getFriendlyNetworkErrorMessage(error, "Failed to continue the Codex thread."));
@@ -520,6 +529,16 @@ export default function ThreadDetailScreen() {
             This is a stored Codex history snapshot. Runtime status loads again when a fresh turn starts.
           </InlineNotice>
         ) : null}
+        {isHistorySnapshot ? (
+          <SecondaryButton
+            disabled={isManagingThread}
+            label={isManagingThread ? "Resuming..." : "Resume Thread"}
+            helperText="Creates a live continuation of this saved thread."
+            onPress={() => {
+              void handleResumeThread();
+            }}
+          />
+        ) : null}
       </View>
 
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
@@ -591,11 +610,46 @@ export default function ThreadDetailScreen() {
         </View>
       ) : null}
 
+      <View style={styles.panelTabs}>
+        <PillButton
+          label={`Conversation ${messages.length}`}
+          selected={detailPanel === "conversation"}
+          onPress={() => setDetailPanel("conversation")}
+        />
+        <PillButton
+          label={`Activity ${activity.length}`}
+          selected={detailPanel === "activity"}
+          onPress={() => setDetailPanel("activity")}
+        />
+      </View>
+
+      {detailPanel === "conversation" ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Conversation</Text>
+          {!messages.length && !isLoading ? (
+            <InlineNotice>No user or agent messages are available in this thread yet.</InlineNotice>
+          ) : null}
+          {messages.map((message) => (
+            <MessageBubble key={message.id} message={message} />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Activity</Text>
+          {!activity.length && !isLoading ? (
+            <InlineNotice>No non-message activity items have been captured for this thread yet.</InlineNotice>
+          ) : null}
+          {activity.map((event) => (
+            <TaskEventItem key={String(event.id)} event={event} />
+          ))}
+        </View>
+      )}
+
       <View style={styles.composerCard}>
         <Text style={styles.sectionTitle}>{waitingOnInput ? "Respond To Codex" : "Reply"}</Text>
         {isHistorySnapshot ? (
           <InlineNotice>
-            This history snapshot cannot receive new turns directly. Use Resume in Thread Actions to create a live thread first.
+            Resume this history snapshot to create a live thread before sending a message.
           </InlineNotice>
         ) : null}
         <LabeledInput
@@ -656,41 +710,6 @@ export default function ThreadDetailScreen() {
           />
         ) : null}
       </View>
-
-      <View style={styles.panelTabs}>
-        <PillButton
-          label={`Conversation ${messages.length}`}
-          selected={detailPanel === "conversation"}
-          onPress={() => setDetailPanel("conversation")}
-        />
-        <PillButton
-          label={`Activity ${activity.length}`}
-          selected={detailPanel === "activity"}
-          onPress={() => setDetailPanel("activity")}
-        />
-      </View>
-
-      {detailPanel === "conversation" ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Conversation</Text>
-          {!messages.length && !isLoading ? (
-            <InlineNotice>No user or agent messages are available in this thread yet.</InlineNotice>
-          ) : null}
-          {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
-        </View>
-      ) : (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Activity</Text>
-          {!activity.length && !isLoading ? (
-            <InlineNotice>No non-message activity items have been captured for this thread yet.</InlineNotice>
-          ) : null}
-          {activity.map((event) => (
-            <TaskEventItem key={String(event.id)} event={event} />
-          ))}
-        </View>
-      )}
 
       {!isLoading && thread ? (
         <View style={styles.section}>
@@ -993,20 +1012,6 @@ function getRequestBody(request: AppServerRequest) {
     case "item/tool/requestUserInput":
       return request.params.questions.map((question) => question.question).join("\n\n");
   }
-}
-
-function upsertTurn(turns: AppTurn[], nextTurn: AppTurn) {
-  const existingIndex = turns.findIndex((turn) => turn.id === nextTurn.id);
-  if (existingIndex === -1) {
-    return [...turns, nextTurn];
-  }
-
-  return turns.map((turn) => (turn.id === nextTurn.id ? { ...turn, ...nextTurn } : turn));
-}
-
-function findActiveTurnId(thread: AppThread) {
-  const activeTurn = [...thread.turns].reverse().find((turn) => turn.status === "inProgress");
-  return activeTurn?.id ?? null;
 }
 
 function getThreadStatusLabel(thread: AppThread) {

@@ -2,7 +2,13 @@ import test = require("node:test");
 import assert = require("node:assert/strict");
 
 import type { AppThread, AppThreadItem } from "../types/app-server";
-import { appendCommandOutputDelta, appendItemTextDelta, upsertTurnItem } from "../utils/thread-state";
+import {
+  appendCommandOutputDelta,
+  appendItemTextDelta,
+  findActiveTurnId,
+  mergeTurnIntoThread,
+  upsertTurnItem,
+} from "../utils/thread-state";
 
 test("upsertTurnItem replaces an existing item and preserves order", () => {
   const items: AppThreadItem[] = [
@@ -63,6 +69,40 @@ test("appendCommandOutputDelta appends output to command execution items", () =>
     item && item.type === "commandExecution" ? item.aggregatedOutput : "",
     "line one\nline two",
   );
+});
+
+test("mergeTurnIntoThread adds a submitted turn for immediate chat updates", () => {
+  const thread = createThread({ turns: [] });
+  const next = mergeTurnIntoThread(thread, {
+    id: "turn-1",
+    status: "inProgress",
+    error: null,
+    items: [{ type: "userMessage", id: "user-1", content: [{ type: "text", text: "hello", text_elements: [] }] }],
+  });
+
+  assert.equal(next.turns.length, 1);
+  assert.equal(next.turns[0]?.id, "turn-1");
+  assert.equal(findActiveTurnId(next), "turn-1");
+});
+
+test("mergeTurnIntoThread replaces completed turns without losing position", () => {
+  const thread = createThread({
+    turns: [
+      { id: "turn-1", status: "inProgress", error: null, items: [] },
+      { id: "turn-2", status: "inProgress", error: null, items: [] },
+    ],
+  });
+
+  const next = mergeTurnIntoThread(thread, {
+    id: "turn-1",
+    status: "completed",
+    error: null,
+    items: [{ type: "agentMessage", id: "agent-1", text: "done", phase: null }],
+  });
+
+  assert.equal(next.turns[0]?.status, "completed");
+  assert.equal(next.turns[0]?.items[0]?.id, "agent-1");
+  assert.equal(next.turns[1]?.id, "turn-2");
 });
 
 function createThread(overrides: Partial<AppThread>): AppThread {

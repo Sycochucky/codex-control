@@ -157,7 +157,9 @@ export class AppServerClient {
         name: "official-codex-phone-app",
         version: "1.0.0",
       },
-      capabilities: null,
+      capabilities: {
+        experimentalApi: true,
+      },
     });
     console.info("[AppServerClient] initialize response received; sending initialized");
     this.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
