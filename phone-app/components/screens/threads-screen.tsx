@@ -71,6 +71,7 @@ export function ThreadsScreen() {
   }, [params.view]);
 
   const continuationSections = useMemo(() => buildThreadContinuationSections(threads), [threads]);
+  const latestThread = threads[0] ?? null;
 
   const loadThreadPage = useCallback(async (
     request: ThreadPageRequest = { cursor: null, pageIndex: 0 },
@@ -176,6 +177,21 @@ export function ThreadsScreen() {
           />
         </View>
       </View>
+      <SecondaryButton
+        disabled={!latestThread}
+        label="Resume Latest"
+        helperText="Open the most recently updated thread without starting a new one."
+        onPress={() => {
+          if (!latestThread) {
+            return;
+          }
+
+          router.push({
+            pathname: "/thread/[id]",
+            params: { id: latestThread.id, view: listMode },
+          });
+        }}
+      />
       <View style={styles.modeRow}>
         <PillButton
           disabled={isLoading}
