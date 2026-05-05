@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
+    "outDir": ".logic-test-dist",
+    "jsx": "react-jsx",
+    "noEmit": false
+  },
+  "include": [
+    "tests/**/*.ts"
+  ]
+}

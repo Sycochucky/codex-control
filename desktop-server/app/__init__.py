@@ -1,0 +1,2 @@
+"""Desktop server application package."""
+

@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Official Codex Phone",
+    "slug": "official-codex-phone",
+    "scheme": "official-codex-phone",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/app-icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#070c16"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.local.officialcodexphone",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#070c16"
+      }
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-router",
+      "./plugins/with-android-local-network"
+    ]
+  }
+}
