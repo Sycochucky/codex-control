@@ -35,17 +35,20 @@ import {
   resolveRuntimeSelection,
   type RuntimeDefaults,
 } from "@/utils/runtime-defaults";
+import { getReviewDefaults } from "@/utils/review-tools";
 import {
   appendCommandOutputDelta,
   appendItemTextDelta,
   findActiveTurnId,
   mergeTurnIntoThread,
   replaceThreadWithSnapshot,
+  shouldAutoRefreshThread,
   upsertTurn,
   upsertTurnItem,
 } from "@/utils/thread-state";
 
 const THREAD_MODEL_LOAD_TIMEOUT_MS = 20000;
+const THREAD_ACTIVE_REFRESH_INTERVAL_MS = 5000;
 
 type BubbleMessage = {
   id: string;
@@ -142,7 +145,7 @@ export default function ThreadDetailScreen() {
               notification.method === "turn/completed" &&
               notification.params.threadId === threadId
             ) {
-              void refreshThreadFromServer();
+              void refreshThreadFromServer({ passive: true });
             }
           },
           (request) => {
@@ -235,7 +238,19 @@ export default function ThreadDetailScreen() {
   const connectionTone = connectionState === "connected" ? "success" : connectionState === "disconnected" ? "error" : "neutral";
   const hasReplyInput = Boolean(reply.trim()) || replyImages.length > 0;
 
-  async function refreshThreadFromServer() {
+  useEffect(() => {
+    if (!thread || connectionState !== "connected" || !shouldAutoRefreshThread(thread)) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      void refreshThreadFromServer({ passive: true });
+    }, THREAD_ACTIVE_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [connectionState, thread?.id, thread?.status.type, activeTurnId]);
+
+  async function refreshThreadFromServer(options?: { passive?: boolean }) {
     const client = clientRef.current;
     if (!client || !threadId) {
       return;
@@ -256,7 +271,7 @@ export default function ThreadDetailScreen() {
       );
       setActiveTurnId(findActiveTurnId(refreshed.thread));
     } catch {
-      if (requestId === threadReadRequestIdRef.current) {
+      if (requestId === threadReadRequestIdRef.current && !options?.passive) {
         setError("The message was sent, but the latest thread state could not be refreshed yet.");
       }
     } finally {
@@ -923,11 +938,14 @@ export default function ThreadDetailScreen() {
                 disabled={isManagingThread}
                 label="Structured Review"
                 onPress={() => {
+                  const reviewDefaults = getReviewDefaults(thread.id);
                   router.push({
                     pathname: "/review/start",
                     params: {
-                      threadId: thread.id,
-                      delivery: "detached",
+                      threadId: reviewDefaults.threadId,
+                      delivery: reviewDefaults.delivery,
+                      targetMode: reviewDefaults.targetMode,
+                      customInstructions: reviewDefaults.customInstructions,
                     },
                   });
                 }}

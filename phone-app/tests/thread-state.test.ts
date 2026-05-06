@@ -8,6 +8,7 @@ import {
   findActiveTurnId,
   mergeTurnIntoThread,
   replaceThreadWithSnapshot,
+  shouldAutoRefreshThread,
   upsertTurnItem,
 } from "../utils/thread-state";
 
@@ -143,6 +144,20 @@ test("replaceThreadWithSnapshot ignores a read for a different thread", () => {
   const refreshed = createThread({ id: "thread-2", updatedAt: 2 });
 
   assert.equal(replaceThreadWithSnapshot(current, refreshed), current);
+});
+
+test("shouldAutoRefreshThread keeps active and in-progress snapshots current", () => {
+  assert.equal(shouldAutoRefreshThread(createThread({ status: { type: "idle" }, turns: [] })), false);
+  assert.equal(shouldAutoRefreshThread(createThread({ status: { type: "active", activeFlags: [] }, turns: [] })), true);
+  assert.equal(
+    shouldAutoRefreshThread(
+      createThread({
+        status: { type: "idle" },
+        turns: [{ id: "turn-1", status: "inProgress", error: null, items: [] }],
+      }),
+    ),
+    true,
+  );
 });
 
 function createThread(overrides: Partial<AppThread>): AppThread {

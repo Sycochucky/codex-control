@@ -5,11 +5,15 @@ export type ReviewTargetMode = "uncommitted" | "baseBranch" | "custom";
 export type ToolsMode = "terminal" | "search" | "review";
 export type CommandCenterMode = "plugins" | "apps" | "skills" | "mcp" | "config" | "experiments";
 
+export const DEFAULT_REVIEW_INSTRUCTIONS =
+  "Review my recent commits for correctness risks and maintainability concerns.";
+
 export function getReviewDefaults(threadId = "") {
   return {
     threadId,
     delivery: "inline" as ReviewDelivery,
     targetMode: "custom" as ReviewTargetMode,
+    customInstructions: DEFAULT_REVIEW_INSTRUCTIONS,
   };
 }
 
@@ -56,7 +60,7 @@ export function buildReviewTargetPayload(
     default:
       return {
         type: "custom",
-        instructions: options.customInstructions?.trim() || "Review the current working changes.",
+        instructions: options.customInstructions?.trim() || DEFAULT_REVIEW_INSTRUCTIONS,
       };
   }
 }

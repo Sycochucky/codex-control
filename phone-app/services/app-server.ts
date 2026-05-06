@@ -27,7 +27,7 @@ import type {
   JsonRpcResponse,
 } from "../types/app-server";
 import type { RuntimeDefaults } from "../utils/runtime-defaults";
-import { buildThreadStartPayload, buildTurnStartPayload } from "../utils/runtime-defaults";
+import { DEFAULT_RUNTIME_DEFAULTS, buildThreadStartPayload, buildTurnStartPayload } from "../utils/runtime-defaults";
 import { normalizeGatewayUrl } from "../utils/network";
 
 type PendingRequest = {
@@ -215,17 +215,12 @@ export class AppServerClient {
     cwd?: string | null;
     runtime?: RuntimeDefaults;
   }) {
+    const runtime = params.runtime ?? DEFAULT_RUNTIME_DEFAULTS;
     const created = (await this.request(
       "thread/start",
       buildThreadStartPayload({
         cwd: params.cwd,
-        runtime: params.runtime ?? {
-          model: null,
-          reasoningEffort: null,
-          approvalPolicy: "on-request",
-          sandbox: "workspace-write",
-          serviceTier: null,
-        },
+        runtime,
       }),
     )) as AppThreadStartResponse;
 
@@ -238,7 +233,7 @@ export class AppServerClient {
       if (params.initialMessage?.trim()) {
         await this.startTurn(created.thread.id, params.initialMessage.trim(), {
           cwd: params.cwd,
-          runtime: params.runtime,
+          runtime,
         });
       }
     } catch (error) {

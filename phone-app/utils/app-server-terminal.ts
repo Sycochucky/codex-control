@@ -34,27 +34,3 @@ export function encodeTerminalInput(text: string) {
 
   throw new Error("No base64 encoder is available in this environment.");
 }
-
-export function buildReviewTargetPayload(
-  mode: "uncommitted" | "baseBranch" | "custom",
-  options: {
-    baseBranch: string;
-    customInstructions: string;
-  },
-) {
-  if (mode === "uncommitted") {
-    return { type: "uncommittedChanges" as const };
-  }
-
-  if (mode === "baseBranch") {
-    return {
-      type: "baseBranch" as const,
-      branch: options.baseBranch.trim() || "main",
-    };
-  }
-
-  return {
-    type: "custom" as const,
-    instructions: options.customInstructions.trim() || "Review the current thread carefully.",
-  };
-}

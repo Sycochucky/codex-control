@@ -8,23 +8,32 @@ import { colors } from "@/constants/theme";
 import { withAppServerClient } from "@/services/app-server";
 import { useSession } from "@/services/session-context";
 import type { AppServerReviewTarget } from "@/types/app-server";
-import { buildReviewTargetPayload } from "@/utils/app-server-terminal";
 import { getFriendlyNetworkErrorMessage } from "@/utils/network";
+import {
+  buildReviewTargetPayload,
+  getReviewDefaults,
+  type ReviewDelivery,
+  type ReviewTargetMode,
+} from "@/utils/review-tools";
 
-type ReviewMode = "uncommitted" | "baseBranch" | "custom";
-type ReviewDelivery = "inline" | "detached";
+type ReviewStartParams = {
+  threadId?: string;
+  delivery?: string;
+  targetMode?: string;
+  baseBranch?: string;
+  customInstructions?: string;
+};
 
 export default function ReviewStartScreen() {
-  const params = useLocalSearchParams<{ threadId?: string; delivery?: string }>();
+  const params = useLocalSearchParams<ReviewStartParams>();
   const router = useRouter();
   const { backendUrl, isHydrated, sessionToken } = useSession();
-  const [threadId, setThreadId] = useState(params.threadId ?? "");
-  const [mode, setMode] = useState<ReviewMode>("uncommitted");
-  const [delivery, setDelivery] = useState<ReviewDelivery>(
-    params.delivery === "inline" ? "inline" : "detached",
-  );
-  const [baseBranch, setBaseBranch] = useState("main");
-  const [customInstructions, setCustomInstructions] = useState("");
+  const defaults = useMemo(() => getReviewDefaults(params.threadId ?? ""), [params.threadId]);
+  const [threadId, setThreadId] = useState(defaults.threadId);
+  const [mode, setMode] = useState<ReviewTargetMode>(() => normalizeReviewTargetMode(params.targetMode, defaults.targetMode));
+  const [delivery, setDelivery] = useState<ReviewDelivery>(() => normalizeReviewDelivery(params.delivery, defaults.delivery));
+  const [baseBranch, setBaseBranch] = useState(params.baseBranch ?? "main");
+  const [customInstructions, setCustomInstructions] = useState(params.customInstructions ?? defaults.customInstructions);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,6 +137,14 @@ export default function ReviewStartScreen() {
       />
     </ScreenShell>
   );
+}
+
+function normalizeReviewTargetMode(value: string | undefined, fallback: ReviewTargetMode): ReviewTargetMode {
+  return value === "uncommitted" || value === "baseBranch" || value === "custom" ? value : fallback;
+}
+
+function normalizeReviewDelivery(value: string | undefined, fallback: ReviewDelivery): ReviewDelivery {
+  return value === "inline" || value === "detached" ? value : fallback;
 }
 
 const styles = StyleSheet.create({

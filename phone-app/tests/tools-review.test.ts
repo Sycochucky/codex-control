@@ -13,6 +13,7 @@ test("getReviewDefaults uses inline delivery for the selected thread", () => {
     threadId: "thread-1",
     delivery: "inline",
     targetMode: "custom",
+    customInstructions: "Review my recent commits for correctness risks and maintainability concerns.",
   });
 });
 

@@ -16,6 +16,10 @@ export function replaceThreadWithSnapshot(current: AppThread, refreshed: AppThre
   return refreshed;
 }
 
+export function shouldAutoRefreshThread(thread: AppThread) {
+  return thread.status.type === "active" || findActiveTurnId(thread) !== null;
+}
+
 export function upsertTurn(turns: AppTurn[], nextTurn: AppTurn) {
   const existingIndex = turns.findIndex((turn) => turn.id === nextTurn.id);
   if (existingIndex === -1) {
