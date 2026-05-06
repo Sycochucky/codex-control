@@ -6,12 +6,14 @@ The app is designed for your own machine, home network, USB debugging, or VPN. D
 
 ## Features
 
-- Browse active and archived Codex App Server threads.
+- Browse active and archived Codex App Server threads grouped by project, with the most recently updated projects and threads first.
 - Continue threads and send follow-up input from Android.
 - View thread metadata, workspace, Git branch, commit, and token usage when available.
 - Run workspace-aware Git actions through the desktop bridge.
 - Create local/GitHub repository setup plans with public/private repo choices and `.gitignore` templates.
 - Inspect Codex, Git, GitHub CLI, model, account, plugin, skill, and rate-limit status.
+- Start a quick development tunnel for temporary out-of-house phone testing.
+- Show clearer connection, waiting, refresh, rate-limit, quota, and context-window status messages.
 - Use a local desktop bridge instead of placing Codex credentials on the phone.
 
 ## Project Layout
@@ -71,6 +73,26 @@ Open the app and connect with:
 
 For LAN or VPN access, use `http://<desktop-lan-ip>:8010` and make sure your firewall allows the desktop server port.
 
+### Quick Tunnel Testing
+
+For temporary out-of-house development testing, start a tunnel to the desktop bridge:
+
+```powershell
+cd phone-app
+.\scripts\quick-tunnel.ps1 -Start
+```
+
+The helper defaults to `cloudflared` and targets `http://127.0.0.1:8010`. It prints the public HTTPS URL and the phone-app environment variable to use:
+
+```powershell
+$env:EXPO_PUBLIC_CODEX_TUNNEL_URL = "https://<your-tunnel>.trycloudflare.com"
+npm run android:local
+```
+
+`EXPO_PUBLIC_CODEX_BACKEND_URL` still takes priority when set. Otherwise `EXPO_PUBLIC_CODEX_TUNNEL_URL` overrides saved backend URLs, which keeps a development build pointed at the temporary tunnel without manually clearing phone storage.
+
+Quick tunnels are for short development sessions only. Stop the tunnel when you are done and do not expose the desktop bridge with the default shared token outside a trusted test window.
+
 ## Useful Commands
 
 Run all repo checks:
@@ -125,9 +147,10 @@ For local development, you can also set phone build defaults:
 ```powershell
 $env:EXPO_PUBLIC_CODEX_BACKEND_PORT = "8010"
 $env:EXPO_PUBLIC_CODEX_BACKEND_URL = "http://127.0.0.1:8010"
+$env:EXPO_PUBLIC_CODEX_TUNNEL_URL = "https://<your-tunnel>.trycloudflare.com"
 ```
 
-The explicit backend URL wins over the port default.
+The explicit backend URL wins over the tunnel URL and port default. The tunnel URL wins over saved phone backend settings when the app hydrates a session.
 
 ## Control Panel
 
@@ -149,4 +172,4 @@ It can start/stop the backend, run phone app checks, and manage local build jobs
 
 ## Current Status
 
-This is an early public release. Android local install, desktop bridge startup, thread browsing, App Server WebSocket proxying, Git surfaces, setup checks, and logic tests are working in the current development environment.
+This is an early public release. Android local install, desktop bridge startup, project-grouped thread browsing, App Server WebSocket proxying, Git surfaces, setup checks, quick tunnel smoke testing, and logic tests are working in the current development environment.

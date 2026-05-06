@@ -22,3 +22,6 @@ Thanks for checking out Codex Control.
 - Phone logic tests pass.
 - Desktop server tests pass.
 - README/setup docs are updated when setup or behavior changes.
+- For Android thread or connection work, run an App Server websocket smoke against the desktop bridge.
+- For tunnel work, verify `/health`, `/auth/login`, `/app-server/status`, and `/app-server/ws` through the public tunnel URL.
+- For phone UI changes, validate on an attached Android device or clearly call out why device validation was blocked.

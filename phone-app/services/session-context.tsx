@@ -17,7 +17,7 @@ import {
   getSessionValidationOutcome,
 } from "@/utils/session-restore";
 import Constants from "expo-constants";
-import { getDefaultBackendUrl } from "@/utils/default-backend-url";
+import { getDefaultBackendUrl, hasExplicitDefaultBackendUrl } from "@/utils/default-backend-url";
 import { getWorkspaceLabel, normalizeWorkspacePath } from "@/utils/workspace-target";
 
 type WorkspaceSelectionInput = {
@@ -62,12 +62,17 @@ const constantsWithHost = Constants as unknown as {
 
 const defaultBackendUrl = getDefaultBackendUrl({
   envUrl: process.env.EXPO_PUBLIC_CODEX_BACKEND_URL,
+  envTunnelUrl: process.env.EXPO_PUBLIC_CODEX_TUNNEL_URL,
   envPort: process.env.EXPO_PUBLIC_CODEX_BACKEND_PORT,
   expoHostUri:
     constantsWithHost.expoConfig?.hostUri ??
     constantsWithHost.manifest2?.extra?.expoClient?.hostUri,
   browserHostname:
     typeof window === "undefined" ? null : window.location?.hostname,
+});
+const hasBackendUrlEnvironmentOverride = hasExplicitDefaultBackendUrl({
+  envUrl: process.env.EXPO_PUBLIC_CODEX_BACKEND_URL,
+  envTunnelUrl: process.env.EXPO_PUBLIC_CODEX_TUNNEL_URL,
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -146,7 +151,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
 
       const restoredBackendUrl =
-        storedBackendUrl && !LEGACY_DEFAULT_BACKEND_URLS.has(storedBackendUrl)
+        storedBackendUrl && !LEGACY_DEFAULT_BACKEND_URLS.has(storedBackendUrl) && !hasBackendUrlEnvironmentOverride
           ? storedBackendUrl
           : defaultBackendUrl;
 

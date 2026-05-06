@@ -26,6 +26,7 @@ import {
   summarizeUserInput,
 } from "@/utils/app-server-thread";
 import { connectWarmAppServer } from "@/utils/app-server-connect";
+import { formatAppServerErrorMessage } from "@/utils/app-server-error";
 import { withTimeout } from "@/utils/async-timeout";
 import { buildComposerInput, type ComposerImageAttachment } from "@/utils/composer-input";
 import { formatStatusLabel, formatTimestamp } from "@/utils/format";
@@ -60,6 +61,11 @@ type BubbleMessage = {
 };
 
 type ActivityEvent = TaskEventRead & { metaLabel?: string | null };
+
+type LiveThreadStatus = {
+  text: string;
+  tone: "neutral" | "success" | "error";
+};
 
 export default function ThreadDetailScreen() {
   const params = useLocalSearchParams<{ id?: string; view?: string }>();
@@ -177,7 +183,7 @@ export default function ThreadDetailScreen() {
         if (!isActive) {
           return;
         }
-        const message = getFriendlyNetworkErrorMessage(error, "Failed to load App Server thread.");
+        const message = formatAppServerErrorMessage(error, "Failed to load App Server thread.");
         setError(
           message.includes("timed out while waiting for initialize")
             ? "Codex App Server is still starting on the desktop. Open the thread again in a moment."
@@ -270,9 +276,15 @@ export default function ThreadDetailScreen() {
         current ? replaceThreadWithSnapshot(current, refreshed.thread) : refreshed.thread,
       );
       setActiveTurnId(findActiveTurnId(refreshed.thread));
-    } catch {
+      setError(null);
+    } catch (error) {
       if (requestId === threadReadRequestIdRef.current && !options?.passive) {
-        setError("The message was sent, but the latest thread state could not be refreshed yet.");
+        setError(
+          formatAppServerErrorMessage(
+            error,
+            "The message was sent, but the latest thread state could not be refreshed yet.",
+          ),
+        );
       }
     } finally {
       if (requestId === threadReadRequestIdRef.current) {
@@ -305,7 +317,7 @@ export default function ThreadDetailScreen() {
       setReplyImages([]);
       await refreshThreadFromServer();
     } catch (error) {
-      setError(getFriendlyNetworkErrorMessage(error, "Failed to send input to Codex."));
+      setError(formatAppServerErrorMessage(error, "Failed to send input to Codex."));
     } finally {
       setIsSubmitting(false);
     }
@@ -380,7 +392,7 @@ export default function ThreadDetailScreen() {
         setActiveTurnId(result.turn.id);
       }
     } catch (error) {
-      setError(getFriendlyNetworkErrorMessage(error, "Failed to continue the Codex thread."));
+      setError(formatAppServerErrorMessage(error, "Failed to continue the Codex thread."));
     } finally {
       setIsSubmitting(false);
     }
@@ -596,6 +608,17 @@ export default function ThreadDetailScreen() {
 
   const replyDisabled = isSubmitting || !hasReplyInput || Boolean(isHistorySnapshot) || Boolean(isThreadBusy) || Boolean(pendingRequest);
   const continueDisabled = isSubmitting || Boolean(isHistorySnapshot) || (!waitingOnInput && thread?.status.type !== "idle") || Boolean(pendingRequest);
+  const liveStatus = getLiveThreadStatus({
+    activeTurnId,
+    connectionState,
+    error,
+    isLoading,
+    isRefreshingThread,
+    isSubmitting,
+    pendingRequest,
+    thread,
+    waitingOnInput,
+  });
 
   if (!isHydrated || !isRuntimeDefaultsHydrated) {
     return (
@@ -635,6 +658,7 @@ export default function ThreadDetailScreen() {
         <InlineNotice tone={connectionTone}>
           App Server: {formatStatusLabel(connectionState)}
         </InlineNotice>
+        <InlineNotice tone={liveStatus.tone}>{liveStatus.text}</InlineNotice>
         {thread?.status.type === "notLoaded" ? (
           <InlineNotice>
             This is a stored Codex history snapshot. Runtime status loads again when a fresh turn starts.
@@ -661,8 +685,6 @@ export default function ThreadDetailScreen() {
           <PrimaryButton label="Retry Session Validation" onPress={retrySessionValidation} />
         </>
       ) : null}
-      {isLoading ? <InlineNotice>Loading the App Server thread and historical turns.</InlineNotice> : null}
-      {isRefreshingThread ? <InlineNotice>Refreshing the latest thread state.</InlineNotice> : null}
       {pendingRequest ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Action Required</Text>
@@ -1119,7 +1141,7 @@ function handleNotification(
       );
       break;
     case "error":
-      setError(notification.params.error.message);
+      setError(formatAppServerErrorMessage(notification.params.error.message, "Codex reported an App Server error."));
       break;
     case "serverRequest/resolved":
       setPendingRequest((current) =>
@@ -1159,6 +1181,67 @@ function getRequestBody(request: AppServerRequest) {
 
 function getThreadStatusLabel(thread: AppThread) {
   return getAppThreadStatusLabel(thread);
+}
+
+function getLiveThreadStatus(input: {
+  activeTurnId: string | null;
+  connectionState: "connecting" | "connected" | "disconnected";
+  error: string | null;
+  isLoading: boolean;
+  isRefreshingThread: boolean;
+  isSubmitting: boolean;
+  pendingRequest: AppServerRequest | null;
+  thread: AppThread | null;
+  waitingOnInput: boolean;
+}): LiveThreadStatus {
+  if (input.connectionState === "disconnected" || input.error) {
+    return {
+      text: "Disconnected or error. Check the error message, then reconnect or retry when the desktop server is ready.",
+      tone: "error",
+    };
+  }
+
+  if (input.connectionState === "connecting" || input.isLoading) {
+    return {
+      text: "Connecting to the Codex App Server and loading this thread.",
+      tone: "neutral",
+    };
+  }
+
+  if (input.isSubmitting) {
+    return {
+      text: input.waitingOnInput
+        ? "Sending your response back to Codex."
+        : "Sending your message and starting the next Codex turn.",
+      tone: "neutral",
+    };
+  }
+
+  if (input.pendingRequest || input.waitingOnInput) {
+    return {
+      text: "Waiting for your input before Codex can continue.",
+      tone: "neutral",
+    };
+  }
+
+  if (input.isRefreshingThread) {
+    return {
+      text: "Refreshing the latest thread state from Codex.",
+      tone: "neutral",
+    };
+  }
+
+  if (input.activeTurnId || input.thread?.status.type === "active") {
+    return {
+      text: "Waiting for Codex to produce the next update.",
+      tone: "neutral",
+    };
+  }
+
+  return {
+    text: "Connected. Codex is idle and ready for your next message.",
+    tone: "success",
+  };
 }
 
 function buildConversationMessages(thread: AppThread | null): BubbleMessage[] {

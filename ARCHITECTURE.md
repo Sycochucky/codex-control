@@ -8,6 +8,10 @@ The phone app is built with Expo Router, React Native, and TypeScript. It owns t
 
 Expo is still used for the JavaScript and native build workflow, but the app is meant to be installed as a native Android build, not used only through Expo Go.
 
+The Threads screen groups App Server threads by their project/workspace metadata. Project groups are ordered by each group's most recently updated thread, and threads inside a group are also shown newest first. This keeps the Android list aligned with the desktop Codex app's project-oriented thread browsing while preserving the paged active/archived list behavior.
+
+Thread detail surfaces live connection state from the App Server client: connecting, connected, sending, waiting for Codex, waiting for user input, refreshing, disconnected, and error states. App Server errors are normalized before display so rate limits, quota or billing limits, and context-window limits get specific user-facing messages.
+
 ## Desktop Bridge
 
 The desktop bridge is a FastAPI service. It provides:
@@ -37,8 +41,11 @@ Supported local access patterns:
 
 - ADB reverse: phone app uses `http://127.0.0.1:8010`
 - LAN/VPN: phone app uses `http://<desktop-lan-ip>:8010`
+- Temporary tunnel: phone app uses `EXPO_PUBLIC_CODEX_TUNNEL_URL=https://<tunnel-host>` and connects through the desktop bridge over HTTPS/WSS
 
 The system is intended for trusted local networks, VPNs, and USB debugging. It is not hardened for direct public internet exposure.
+
+The temporary tunnel path is a development convenience around the same desktop bridge. It does not introduce a second backend surface: the runtime path remains `phone-app -> desktop-server -> local Codex App Server -> Codex`, with the tunnel only carrying traffic to `desktop-server`.
 
 ## Repository Shape
 

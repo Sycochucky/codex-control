@@ -402,6 +402,10 @@ export function SettingsScreen() {
           Saving a different backend URL or shared token ends the current session and sends you
           back to Connect.
         </Text>
+        <Text style={styles.meta}>
+          For quick tunnel access, paste the public HTTPS tunnel URL as the Backend URL. Keep
+          the same shared token.
+        </Text>
         <PrimaryButton
           disabled={isSaving || !draftBackendUrl.trim() || !draftSharedToken.trim()}
           label={isSaving ? "Saving..." : "Save Connection"}

@@ -81,10 +81,12 @@ export default function ConnectScreen() {
         value={sharedToken}
       />
       <InlineNotice>
-        Use `http://127.0.0.1:8010` for local web/iOS simulator testing. Android emulators
-        usually need `http://10.0.2.2:8010`, and physical devices need your LAN IP or ADB reverse. Saved
-        sessions are restored on launch and kept through transient backend outages. The default
-        shared token is `codex-dev` unless you override the backend environment.
+        Local testing can use `http://127.0.0.1:8010`, Android emulators usually need
+        `http://10.0.2.2:8010`, and physical devices need your LAN IP or ADB reverse.
+      </InlineNotice>
+      <InlineNotice>
+        Away from home, paste your HTTPS Cloudflare Tunnel or ngrok URL here. Auth still uses
+        the same desktop shared token, defaulting to `codex-dev`.
       </InlineNotice>
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
       <PrimaryButton

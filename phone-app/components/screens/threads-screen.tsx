@@ -21,7 +21,7 @@ import {
 import { withTimeout } from "@/utils/async-timeout";
 import { withWarmAppServerClient } from "@/utils/app-server-connect";
 import { getFriendlyNetworkErrorMessage } from "@/utils/network";
-import { buildThreadContinuationSections } from "@/utils/thread-list";
+import { buildThreadProjectSections } from "@/utils/thread-list";
 import {
   beginThreadPageRequest,
   completeThreadPageRequest,
@@ -70,7 +70,7 @@ export function ThreadsScreen() {
     setListMode(params.view === "archived" ? "archived" : "active");
   }, [params.view]);
 
-  const continuationSections = useMemo(() => buildThreadContinuationSections(threads), [threads]);
+  const projectSections = useMemo(() => buildThreadProjectSections(threads), [threads]);
   const latestThread = threads[0] ?? null;
 
   const loadThreadPage = useCallback(async (
@@ -225,17 +225,22 @@ export function ThreadsScreen() {
             : "No active threads yet. Create one from the New Thread screen."}
         </InlineNotice>
       ) : null}
-      {continuationSections.length ? (
+      {projectSections.length ? (
         <View style={styles.continueBlock}>
           <View style={styles.sectionHeading}>
-            <Text style={styles.groupTitle}>Current Threads</Text>
-            <Text style={styles.sectionHint}>Tap a thread to continue it from this phone.</Text>
+            <Text style={styles.groupTitle}>Threads By Project</Text>
+            <Text style={styles.sectionHint}>Newest project workspaces appear first.</Text>
           </View>
-          {continuationSections.map((group) => (
+          {projectSections.map((group) => (
             <View key={group.key} style={styles.groupSection}>
-              <Text style={styles.groupSubtitle}>
-                {group.title} ({group.items.length})
-              </Text>
+              <View style={styles.projectHeading}>
+                <Text style={styles.groupSubtitle}>
+                  {group.title} ({group.items.length})
+                </Text>
+                {group.statusSummary ? (
+                  <Text style={styles.projectStatus}>{group.statusSummary}</Text>
+                ) : null}
+              </View>
               {group.items.map((thread) => (
                 <ThreadListItem
                   key={thread.id}
@@ -380,6 +385,9 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   groupSection: {
     gap: 10,
   },
+  projectHeading: {
+    gap: 3,
+  },
   groupTitle: {
     fontSize: 16,
     fontWeight: "800",
@@ -390,5 +398,10 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     fontWeight: "800",
     color: colors.textMuted,
     textTransform: "uppercase",
+  },
+  projectStatus: {
+    color: colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

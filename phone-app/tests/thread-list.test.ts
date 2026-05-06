@@ -3,7 +3,7 @@ import assert = require("node:assert/strict");
 
 import type { AppThread } from "../types/app-server";
 import {
-  buildThreadContinuationSections,
+  buildThreadProjectSections,
   getWorkspaceLabel,
   normalizeWorkspacePath,
   sortThreadsByUpdated,
@@ -30,33 +30,51 @@ test("sortThreadsByUpdated keeps newest threads first", () => {
   assert.deepEqual(threads.map((thread) => thread.id), ["two", "three", "one"]);
 });
 
-test("buildThreadContinuationSections groups current threads for continuing work", () => {
-  const sections = buildThreadContinuationSections([
-    createThread({ id: "completed", updatedAt: 10, status: { type: "idle" } }),
-    createThread({
-      id: "waiting",
-      updatedAt: 20,
-      status: { type: "active", activeFlags: ["waitingOnUserInput"] },
-    }),
-    createThread({ id: "running", updatedAt: 30, status: { type: "active", activeFlags: [] } }),
-    createThread({ id: "failed", updatedAt: 40, status: { type: "systemError" } }),
-    createThread({ id: "history", updatedAt: 50, status: { type: "notLoaded" } }),
+test("buildThreadProjectSections orders project groups by their most recently updated thread", () => {
+  const sections = buildThreadProjectSections([
+    createThread({ id: "older-syco", cwd: "D:\\DevProjects\\codex-app-syco", updatedAt: 10 }),
+    createThread({ id: "latest-other", cwd: "D:\\DevProjects\\other-project", updatedAt: 50 }),
+    createThread({ id: "newer-syco", cwd: "D:\\DevProjects\\codex-app-syco", updatedAt: 30 }),
   ]);
 
   assert.deepEqual(
     sections.map((section) => ({
-      key: section.key,
       title: section.title,
+      latestUpdatedAt: section.latestUpdatedAt,
       threadIds: section.items.map((thread) => thread.id),
     })),
     [
-      { key: "waiting", title: "Needs Response", threadIds: ["waiting"] },
-      { key: "running", title: "Running Now", threadIds: ["running"] },
-      { key: "failed", title: "Needs Attention", threadIds: ["failed"] },
-      { key: "completed", title: "Ready To Continue", threadIds: ["completed"] },
-      { key: "history", title: "History Snapshots", threadIds: ["history"] },
+      { title: "other-project", latestUpdatedAt: 50, threadIds: ["latest-other"] },
+      { title: "codex-app-syco", latestUpdatedAt: 30, threadIds: ["newer-syco", "older-syco"] },
     ],
   );
+});
+
+test("buildThreadProjectSections normalizes cwd before grouping and keeps newest project threads first", () => {
+  const sections = buildThreadProjectSections([
+    createThread({ id: "old", cwd: "\\\\?\\D:/DevProjects/codex-app-syco/", updatedAt: 10 }),
+    createThread({ id: "new", cwd: "D:\\DevProjects\\codex-app-syco", updatedAt: 40 }),
+    createThread({ id: "middle", cwd: "D:/DevProjects/codex-app-syco", updatedAt: 30 }),
+  ]);
+
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0]?.key, "D:\\DevProjects\\codex-app-syco");
+  assert.equal(sections[0]?.title, "codex-app-syco");
+  assert.deepEqual(sections[0]?.items.map((thread) => thread.id), ["new", "middle", "old"]);
+});
+
+test("buildThreadProjectSections keeps status context in each project summary", () => {
+  const sections = buildThreadProjectSections([
+    createThread({
+      id: "waiting",
+      updatedAt: 30,
+      status: { type: "active", activeFlags: ["waitingOnUserInput"] },
+    }),
+    createThread({ id: "running", updatedAt: 20, status: { type: "active", activeFlags: [] } }),
+    createThread({ id: "completed", updatedAt: 10, status: { type: "idle" } }),
+  ]);
+
+  assert.equal(sections[0]?.statusSummary, "Needs response 1 | Running 1 | Ready 1");
 });
 
 function createThread(overrides: Partial<AppThread>): AppThread {
