@@ -5,8 +5,10 @@ import {
   AppServerClient,
   CreatedThreadError,
   mergeThreadListPages,
+  textInput,
   withAppServerClient,
 } from "../services/app-server";
+import { buildComposerInput, createImageDataUrl } from "../utils/composer-input";
 import { getSessionValidationOutcome } from "../utils/session-restore";
 
 test("getSessionValidationOutcome only treats 401 as invalid", () => {
@@ -523,7 +525,7 @@ test("startThread surfaces the created thread id when follow-up setup fails", as
   }
 });
 
-test("startThread sends create, rename, and first turn requests", async () => {
+test("startThread creates a persisted project thread and can discover it in thread list", async () => {
   const originalWebSocket = globalThis.WebSocket;
   const sockets: FakeWebSocket[] = [];
   const sent: Array<{ id?: string | number; method?: string; params?: Record<string, unknown> }> = [];
@@ -591,6 +593,28 @@ test("startThread sends create, rename, and first turn requests", async () => {
             result: { turn: { id: "turn-1", status: "inProgress", error: null, items: [] } },
           }),
         });
+        return;
+      }
+
+      if (parsed.method === "thread/list") {
+        this.onmessage?.({
+          data: JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id,
+            result: {
+              data: [
+                createThread({
+                  id: "created-thread",
+                  name: "Phone task",
+                  preview: "Run the mobile smoke",
+                  cwd: "D:\\DevProjects\\codex-app-syco",
+                  updatedAt: 10,
+                }),
+              ],
+              nextCursor: null,
+            },
+          }),
+        });
       }
     }
 
@@ -629,12 +653,235 @@ test("startThread sends create, rename, and first turn requests", async () => {
         .map((entry) => entry.method),
       ["thread/start", "thread/name/set", "turn/start"],
     );
+    assert.deepEqual(sent.find((entry) => entry.method === "thread/start")?.params, {
+      cwd: "D:\\DevProjects\\codex-app-syco",
+      model: null,
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      serviceTier: null,
+      config: null,
+      ephemeral: false,
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    });
     assert.equal(sent.find((entry) => entry.method === "thread/name/set")?.params?.threadId, "created-thread");
     assert.equal(sent.find((entry) => entry.method === "thread/name/set")?.params?.name, "Phone task");
-    assert.equal(sent.find((entry) => entry.method === "turn/start")?.params?.threadId, "created-thread");
+    assert.deepEqual(sent.find((entry) => entry.method === "turn/start")?.params, {
+      threadId: "created-thread",
+      input: [{ type: "text", text: "Run the mobile smoke", text_elements: [] }],
+      cwd: "D:\\DevProjects\\codex-app-syco",
+      approvalPolicy: "on-request",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        writableRoots: ["D:\\DevProjects\\codex-app-syco"],
+        readOnlyAccess: { type: "fullAccess" },
+        networkAccess: false,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      },
+      model: null,
+      serviceTier: null,
+      effort: null,
+    });
+
+    const threads = await client.listAllThreads({ limit: 25 });
+    assert.equal(sent.find((entry) => entry.method === "thread/list")?.params?.limit, 25);
+    assert.equal(threads[0]?.id, "created-thread");
+    assert.equal(threads[0]?.cwd, "D:\\DevProjects\\codex-app-syco");
+    assert.equal(threads[0]?.name, "Phone task");
+    assert.equal(threads[0]?.ephemeral, false);
   } finally {
     globalThis.WebSocket = originalWebSocket;
   }
+});
+
+test("AppServerClient sends text and image inputs when starting a turn", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets: FakeWebSocket[] = [];
+  const sent: Array<{ id?: string | number; method?: string; params?: Record<string, unknown> }> = [];
+
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly url: string;
+    readyState = FakeWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((event: { reason?: string }) => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+
+    send(payload: string) {
+      const parsed = JSON.parse(payload) as { id?: string | number; method?: string; params?: Record<string, unknown> };
+      sent.push(parsed);
+      if (parsed.id === undefined || !parsed.method) {
+        return;
+      }
+
+      if (parsed.method === "initialize") {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+        return;
+      }
+
+      if (parsed.method === "turn/start") {
+        this.onmessage?.({
+          data: JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id,
+            result: { turn: { id: "turn-1", status: "inProgress", error: null, items: [] } },
+          }),
+        });
+      }
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ reason: "" });
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+  try {
+    const client = new AppServerClient("http://127.0.0.1:8000", "token");
+    const socket = sockets[0];
+    assert.ok(socket);
+
+    const connectPromise = client.connect();
+    socket.open();
+    await connectPromise;
+
+    await client.startTurn(
+      "thread-1",
+      [
+        textInput("Please inspect this."),
+        { type: "image", url: "data:image/png;base64,abc123" },
+      ],
+      { cwd: "D:\\DevProjects\\codex-app-syco" },
+    );
+
+    assert.deepEqual(sent.find((entry) => entry.method === "turn/start")?.params, {
+      threadId: "thread-1",
+      input: [
+        { type: "text", text: "Please inspect this.", text_elements: [] },
+        { type: "image", url: "data:image/png;base64,abc123" },
+      ],
+      approvalPolicy: "on-request",
+    });
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("AppServerClient sends text and image inputs when steering a turn", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets: FakeWebSocket[] = [];
+  const sent: Array<{ id?: string | number; method?: string; params?: Record<string, unknown> }> = [];
+
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly url: string;
+    readyState = FakeWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((event: { reason?: string }) => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+
+    send(payload: string) {
+      const parsed = JSON.parse(payload) as { id?: string | number; method?: string; params?: Record<string, unknown> };
+      sent.push(parsed);
+      if (parsed.id === undefined || !parsed.method) {
+        return;
+      }
+
+      if (parsed.method === "initialize") {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+        return;
+      }
+
+      if (parsed.method === "turn/steer") {
+        this.onmessage?.({
+          data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: { turnId: "turn-1" } }),
+        });
+      }
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ reason: "" });
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+  try {
+    const client = new AppServerClient("http://127.0.0.1:8000", "token");
+    const socket = sockets[0];
+    assert.ok(socket);
+
+    const connectPromise = client.connect();
+    socket.open();
+    await connectPromise;
+
+    await client.steerTurn("thread-1", "turn-1", [
+      textInput("Here is the screenshot."),
+      { type: "image", url: "data:image/jpeg;base64,xyz789" },
+    ]);
+
+    assert.deepEqual(sent.find((entry) => entry.method === "turn/steer")?.params?.input, [
+      { type: "text", text: "Here is the screenshot.", text_elements: [] },
+      { type: "image", url: "data:image/jpeg;base64,xyz789" },
+    ]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("buildComposerInput keeps text first and converts picked images to data URLs", () => {
+  assert.deepEqual(
+    buildComposerInput({
+      text: "Check this",
+      images: [
+        {
+          id: "image-1",
+          name: "screen.png",
+          mimeType: "image/png",
+          base64: "abc123",
+        },
+      ],
+    }),
+    [
+      { type: "text", text: "Check this", text_elements: [] },
+      { type: "image", url: "data:image/png;base64,abc123" },
+    ],
+  );
+  assert.equal(createImageDataUrl({ mimeType: "image/jpeg", base64: "xyz789" }), "data:image/jpeg;base64,xyz789");
 });
 
 test("AppServerClient sends hidden-model and workspace config params", async () => {

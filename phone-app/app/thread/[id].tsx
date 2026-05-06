@@ -1,6 +1,7 @@
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 
 import { MessageBubble } from "@/components/message-bubble";
 import { RuntimeControls } from "@/components/runtime-controls";
@@ -26,6 +27,7 @@ import {
 } from "@/utils/app-server-thread";
 import { connectWarmAppServer } from "@/utils/app-server-connect";
 import { withTimeout } from "@/utils/async-timeout";
+import { buildComposerInput, type ComposerImageAttachment } from "@/utils/composer-input";
 import { formatStatusLabel, formatTimestamp } from "@/utils/format";
 import { getFriendlyNetworkErrorMessage } from "@/utils/network";
 import {
@@ -33,16 +35,20 @@ import {
   resolveRuntimeSelection,
   type RuntimeDefaults,
 } from "@/utils/runtime-defaults";
+import { getReviewDefaults } from "@/utils/review-tools";
 import {
   appendCommandOutputDelta,
   appendItemTextDelta,
   findActiveTurnId,
   mergeTurnIntoThread,
+  replaceThreadWithSnapshot,
+  shouldAutoRefreshThread,
   upsertTurn,
   upsertTurnItem,
 } from "@/utils/thread-state";
 
 const THREAD_MODEL_LOAD_TIMEOUT_MS = 20000;
+const THREAD_ACTIVE_REFRESH_INTERVAL_MS = 5000;
 
 type BubbleMessage = {
   id: string;
@@ -70,6 +76,7 @@ export default function ThreadDetailScreen() {
   const { runtimeDefaults, isRuntimeDefaultsHydrated } = useRuntimeDefaults();
   const [thread, setThread] = useState<AppThread | null>(null);
   const [reply, setReply] = useState("");
+  const [replyImages, setReplyImages] = useState<ComposerImageAttachment[]>([]);
   const [replyRuntimeDraft, setReplyRuntimeDraft] = useState<RuntimeDefaults>(runtimeDefaults);
   const [models, setModels] = useState<AppServerModel[]>([]);
   const [showReplyRuntime, setShowReplyRuntime] = useState(false);
@@ -79,6 +86,8 @@ export default function ThreadDetailScreen() {
   const [renameTitle, setRenameTitle] = useState("");
   const [rollbackTurns, setRollbackTurns] = useState("1");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPickingImage, setIsPickingImage] = useState(false);
+  const [isRefreshingThread, setIsRefreshingThread] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [isManagingThread, setIsManagingThread] = useState(false);
@@ -90,6 +99,7 @@ export default function ThreadDetailScreen() {
   const [toolAnswers, setToolAnswers] = useState<Record<string, string>>({});
   const clientRef = useRef<Awaited<ReturnType<typeof connectWarmAppServer>> | null>(null);
   const modelRequestIdRef = useRef(0);
+  const threadReadRequestIdRef = useRef(0);
   const threadId = params.id ?? "";
   const authToken = sessionToken ?? "";
   const isArchivedView = params.view === "archived";
@@ -131,6 +141,12 @@ export default function ThreadDetailScreen() {
               return;
             }
             handleNotification(notification, threadId, setThread, setActiveTurnId, setError, setPendingRequest);
+            if (
+              notification.method === "turn/completed" &&
+              notification.params.threadId === threadId
+            ) {
+              void refreshThreadFromServer({ passive: true });
+            }
           },
           (request) => {
             if (!isActive) {
@@ -220,20 +236,65 @@ export default function ThreadDetailScreen() {
   const waitingOnInput = thread?.status.type === "active" && thread.status.activeFlags.includes("waitingOnUserInput");
   const isThreadBusy = thread?.status.type === "active" && !waitingOnInput;
   const connectionTone = connectionState === "connected" ? "success" : connectionState === "disconnected" ? "error" : "neutral";
+  const hasReplyInput = Boolean(reply.trim()) || replyImages.length > 0;
+
+  useEffect(() => {
+    if (!thread || connectionState !== "connected" || !shouldAutoRefreshThread(thread)) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      void refreshThreadFromServer({ passive: true });
+    }, THREAD_ACTIVE_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [connectionState, thread?.id, thread?.status.type, activeTurnId]);
+
+  async function refreshThreadFromServer(options?: { passive?: boolean }) {
+    const client = clientRef.current;
+    if (!client || !threadId) {
+      return;
+    }
+
+    const requestId = threadReadRequestIdRef.current + 1;
+    threadReadRequestIdRef.current = requestId;
+    setIsRefreshingThread(true);
+
+    try {
+      const refreshed = await client.readThread(threadId);
+      if (requestId !== threadReadRequestIdRef.current) {
+        return;
+      }
+
+      setThread((current) =>
+        current ? replaceThreadWithSnapshot(current, refreshed.thread) : refreshed.thread,
+      );
+      setActiveTurnId(findActiveTurnId(refreshed.thread));
+    } catch {
+      if (requestId === threadReadRequestIdRef.current && !options?.passive) {
+        setError("The message was sent, but the latest thread state could not be refreshed yet.");
+      }
+    } finally {
+      if (requestId === threadReadRequestIdRef.current) {
+        setIsRefreshingThread(false);
+      }
+    }
+  }
 
   async function handleReply() {
-    if (!clientRef.current || !reply.trim()) {
+    if (!clientRef.current || !hasReplyInput) {
       return;
     }
 
     try {
       setIsSubmitting(true);
       setError(null);
+      const input = buildComposerInput({ text: reply, images: replyImages });
       if (activeTurnId && waitingOnInput) {
-        const result = await clientRef.current.steerTurn(threadId, activeTurnId, reply.trim());
+        const result = await clientRef.current.steerTurn(threadId, activeTurnId, input);
         setActiveTurnId(result.turnId);
       } else {
-        const result = await clientRef.current.startTurn(threadId, reply.trim(), {
+        const result = await clientRef.current.startTurn(threadId, input, {
           cwd: thread?.cwd,
           runtime: showReplyRuntime ? getReplyRuntimeForRequest() : undefined,
         });
@@ -241,10 +302,60 @@ export default function ThreadDetailScreen() {
         setActiveTurnId(result.turn.id);
       }
       setReply("");
+      setReplyImages([]);
+      await refreshThreadFromServer();
     } catch (error) {
       setError(getFriendlyNetworkErrorMessage(error, "Failed to send input to Codex."));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handlePickImage() {
+    if (isHistorySnapshot || isSubmitting || pendingRequest) {
+      return;
+    }
+
+    try {
+      setIsPickingImage(true);
+      setError(null);
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setError("Photo library permission is required to attach an image.");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsMultipleSelection: true,
+        base64: true,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.9,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const images = result.assets
+        .filter((asset) => Boolean(asset.base64))
+        .map((asset, index): ComposerImageAttachment => ({
+          id: asset.assetId ?? `${asset.uri}-${Date.now()}-${index}`,
+          name: asset.fileName ?? `Image ${index + 1}`,
+          mimeType: asset.mimeType ?? "image/jpeg",
+          base64: asset.base64 ?? "",
+          uri: asset.uri,
+        }));
+
+      if (!images.length) {
+        setError("The selected image could not be attached.");
+        return;
+      }
+
+      setReplyImages((current) => [...current, ...images]);
+    } catch (error) {
+      setError(getFriendlyNetworkErrorMessage(error, "Failed to attach image."));
+    } finally {
+      setIsPickingImage(false);
     }
   }
 
@@ -483,7 +594,7 @@ export default function ThreadDetailScreen() {
     });
   }
 
-  const replyDisabled = isSubmitting || !reply.trim() || Boolean(isHistorySnapshot) || Boolean(isThreadBusy) || Boolean(pendingRequest);
+  const replyDisabled = isSubmitting || !hasReplyInput || Boolean(isHistorySnapshot) || Boolean(isThreadBusy) || Boolean(pendingRequest);
   const continueDisabled = isSubmitting || Boolean(isHistorySnapshot) || (!waitingOnInput && thread?.status.type !== "idle") || Boolean(pendingRequest);
 
   if (!isHydrated || !isRuntimeDefaultsHydrated) {
@@ -551,6 +662,7 @@ export default function ThreadDetailScreen() {
         </>
       ) : null}
       {isLoading ? <InlineNotice>Loading the App Server thread and historical turns.</InlineNotice> : null}
+      {isRefreshingThread ? <InlineNotice>Refreshing the latest thread state.</InlineNotice> : null}
       {pendingRequest ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Action Required</Text>
@@ -660,6 +772,34 @@ export default function ThreadDetailScreen() {
           placeholder={isHistorySnapshot ? "Resume this snapshot before replying." : "Tell Codex what to do next."}
           value={reply}
         />
+        <View style={styles.attachmentActions}>
+          <SecondaryButton
+            disabled={isHistorySnapshot || isSubmitting || isPickingImage || Boolean(pendingRequest)}
+            label={isPickingImage ? "Opening Photos..." : "Attach Image"}
+            onPress={() => {
+              void handlePickImage();
+            }}
+          />
+        </View>
+        {replyImages.length ? (
+          <View style={styles.attachmentList}>
+            {replyImages.map((image) => (
+              <View key={image.id} style={styles.attachmentItem}>
+                {image.uri ? <Image source={{ uri: image.uri }} style={styles.attachmentThumb} /> : null}
+                <View style={styles.attachmentDetails}>
+                  <Text style={styles.attachmentName} numberOfLines={1}>{image.name}</Text>
+                  <Text style={styles.statusMeta}>{image.mimeType}</Text>
+                </View>
+                <PillButton
+                  label="Remove"
+                  onPress={() => {
+                    setReplyImages((current) => current.filter((item) => item.id !== image.id));
+                  }}
+                />
+              </View>
+            ))}
+          </View>
+        ) : null}
         <Text style={styles.statusMeta}>
           Runtime:{" "}
           {showReplyRuntime
@@ -798,11 +938,14 @@ export default function ThreadDetailScreen() {
                 disabled={isManagingThread}
                 label="Structured Review"
                 onPress={() => {
+                  const reviewDefaults = getReviewDefaults(thread.id);
                   router.push({
                     pathname: "/review/start",
                     params: {
-                      threadId: thread.id,
-                      delivery: "detached",
+                      threadId: reviewDefaults.threadId,
+                      delivery: reviewDefaults.delivery,
+                      targetMode: reviewDefaults.targetMode,
+                      customInstructions: reviewDefaults.customInstructions,
                     },
                   });
                 }}
@@ -1173,5 +1316,35 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   requestActions: {
     gap: 10,
+  },
+  attachmentActions: {
+    gap: 8,
+  },
+  attachmentList: {
+    gap: 8,
+  },
+  attachmentItem: {
+    alignItems: "center",
+    backgroundColor: colors.backgroundElevated,
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    padding: 8,
+  },
+  attachmentThumb: {
+    borderRadius: 10,
+    height: 52,
+    width: 52,
+  },
+  attachmentDetails: {
+    flex: 1,
+    minWidth: 0,
+  },
+  attachmentName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

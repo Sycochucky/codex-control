@@ -8,6 +8,18 @@ export function mergeTurnIntoThread(thread: AppThread, nextTurn: AppTurn) {
   };
 }
 
+export function replaceThreadWithSnapshot(current: AppThread, refreshed: AppThread) {
+  if (current.id !== refreshed.id) {
+    return current;
+  }
+
+  return refreshed;
+}
+
+export function shouldAutoRefreshThread(thread: AppThread) {
+  return thread.status.type === "active" || findActiveTurnId(thread) !== null;
+}
+
 export function upsertTurn(turns: AppTurn[], nextTurn: AppTurn) {
   const existingIndex = turns.findIndex((turn) => turn.id === nextTurn.id);
   if (existingIndex === -1) {
