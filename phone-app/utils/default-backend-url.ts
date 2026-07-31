@@ -1,8 +1,9 @@
-const DEFAULT_BACKEND_PORT = 8010;
+const DEFAULT_REMOTE_PORT = 8765;
 
 type DefaultBackendUrlInput = {
   envUrl?: string | null;
   envTunnelUrl?: string | null;
+  envRemoteUrl?: string | null;
   envPort?: string | number | null;
   expoHostUri?: string | null;
   browserHostname?: string | null;
@@ -12,13 +13,15 @@ type DefaultBackendUrlInput = {
 export function getDefaultBackendUrl({
   envUrl,
   envTunnelUrl,
+  envRemoteUrl,
   envPort,
   expoHostUri,
   browserHostname,
   port,
 }: DefaultBackendUrlInput = {}) {
-  const backendPort = normalizePort(port ?? envPort, DEFAULT_BACKEND_PORT);
+  const remotePort = normalizePort(port ?? envPort, DEFAULT_REMOTE_PORT);
   const explicitUrl =
+    normalizeExplicitUrl(resolveEnvRemoteUrl(envRemoteUrl)) ??
     normalizeExplicitUrl(envUrl) ??
     normalizeExplicitUrl(resolveEnvTunnelUrl(envTunnelUrl));
   if (explicitUrl) {
@@ -27,30 +30,32 @@ export function getDefaultBackendUrl({
 
   const expoHost = extractHost(expoHostUri);
   if (expoHost && !isLocalHost(expoHost)) {
-    return `http://${formatHost(expoHost)}:${backendPort}`;
+    return `ws://${formatHost(expoHost)}:${remotePort}`;
   }
 
   const webHost = extractHost(browserHostname);
   if (webHost && !isLocalHost(webHost)) {
-    return `http://${formatHost(webHost)}:${backendPort}`;
+    return `ws://${formatHost(webHost)}:${remotePort}`;
   }
 
-  return `http://127.0.0.1:${backendPort}`;
+  return `ws://127.0.0.1:${remotePort}`;
 }
 
 export function hasExplicitDefaultBackendUrl({
   envUrl,
   envTunnelUrl,
-}: Pick<DefaultBackendUrlInput, "envUrl" | "envTunnelUrl"> = {}) {
+  envRemoteUrl,
+}: Pick<DefaultBackendUrlInput, "envUrl" | "envTunnelUrl" | "envRemoteUrl"> = {}) {
   return Boolean(
-    normalizeExplicitUrl(envUrl) ??
+    normalizeExplicitUrl(resolveEnvRemoteUrl(envRemoteUrl)) ??
+      normalizeExplicitUrl(envUrl) ??
       normalizeExplicitUrl(resolveEnvTunnelUrl(envTunnelUrl)),
   );
 }
 
 function normalizeExplicitUrl(value?: string | null) {
   const normalized = value?.trim().replace(/\/+$/, "");
-  if (!normalized || !/^https?:\/\//i.test(normalized)) {
+  if (!normalized || !/^(https?|wss?):\/\//i.test(normalized)) {
     return null;
   }
 
@@ -60,6 +65,12 @@ function normalizeExplicitUrl(value?: string | null) {
 function resolveEnvTunnelUrl(value: string | null | undefined) {
   return value === undefined && typeof process !== "undefined"
     ? process.env.EXPO_PUBLIC_CODEX_TUNNEL_URL
+    : value;
+}
+
+function resolveEnvRemoteUrl(value: string | null | undefined) {
+  return value === undefined && typeof process !== "undefined"
+    ? process.env.EXPO_PUBLIC_CODEX_REMOTE_URL
     : value;
 }
 

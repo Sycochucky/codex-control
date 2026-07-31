@@ -3,9 +3,9 @@ import { useState } from "react";
 
 import { ScreenShell } from "@/components/screen-shell";
 import { InlineNotice, LabeledInput, PrimaryButton } from "@/components/ui";
-import { login } from "@/services/api";
-import { useSession } from "@/services/session-context";
-import { getFriendlyNetworkErrorMessage, isValidBackendUrl } from "@/utils/network";
+import { withAppServerClient } from "@/services/app-server";
+import { createConnectedSessionToken, useSession } from "@/services/session-context";
+import { getFriendlyNetworkErrorMessage, isValidAppServerEndpoint } from "@/utils/network";
 
 export default function ConnectScreen() {
   const router = useRouter();
@@ -24,8 +24,8 @@ export default function ConnectScreen() {
   if (!isHydrated) {
     return (
       <ScreenShell
-        title="Phone Access"
-        subtitle="Restoring secure local session state."
+        title="Codex Remote"
+        subtitle="Restoring saved remote-control connection."
       >
         <InlineNotice>Loading saved connection details.</InlineNotice>
       </ScreenShell>
@@ -37,21 +37,18 @@ export default function ConnectScreen() {
   }
 
   async function handleConnect() {
-    if (!backendUrl.trim() || !isValidBackendUrl(backendUrl)) {
-      setError("Enter a full backend URL starting with http:// or https://.");
-      return;
-    }
-
-    if (!sharedToken.trim()) {
-      setError("Enter the shared token configured on the desktop server.");
+    if (!backendUrl.trim() || !isValidAppServerEndpoint(backendUrl)) {
+      setError("Enter a full Codex App Server endpoint starting with ws://, wss://, http://, or https://.");
       return;
     }
 
     try {
       setIsSubmitting(true);
       setError(null);
-      const response = await login(backendUrl, sharedToken, "phone-app");
-      setSessionToken(response.token);
+      await withAppServerClient(backendUrl, sharedToken, async (client) => {
+        await client.listThreads({ limit: 1, useStateDbOnly: true });
+      });
+      setSessionToken(createConnectedSessionToken());
       router.replace("/(tabs)/threads");
     } catch (error) {
       setError(getFriendlyNetworkErrorMessage(error, "Connection failed."));
@@ -62,18 +59,18 @@ export default function ConnectScreen() {
 
   return (
     <ScreenShell
-      title="Phone Access"
-      subtitle="Connect the Expo app to the local desktop server with the shared token."
+      title="Codex Remote"
+      subtitle="Connect directly to the official Codex App Server or remote-control endpoint."
     >
       <LabeledInput
-        label="Backend URL"
+        label="Codex App Server URL"
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setBackendUrl}
         value={backendUrl}
       />
       <LabeledInput
-        label="Shared Token"
+        label="Bearer Token (Optional)"
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setSharedToken}
@@ -81,18 +78,18 @@ export default function ConnectScreen() {
         value={sharedToken}
       />
       <InlineNotice>
-        Local testing can use `http://127.0.0.1:8010`, Android emulators usually need
-        `http://10.0.2.2:8010`, and physical devices need your LAN IP or ADB reverse.
+        Start Codex with `codex remote-control` or `codex app-server --listen ws://127.0.0.1:8765`,
+        then enter the reachable `ws://` or `wss://` endpoint here.
       </InlineNotice>
       <InlineNotice>
-        Away from home, paste your HTTPS Cloudflare Tunnel or ngrok URL here. Auth still uses
-        the same desktop shared token, defaulting to `codex-dev`.
+        For non-loopback listeners, use the official Codex websocket auth token. No desktop bridge
+        service or shared development token is used by this remote-control path.
       </InlineNotice>
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
       <PrimaryButton
-        disabled={isSubmitting || !backendUrl.trim() || !sharedToken.trim()}
+        disabled={isSubmitting || !backendUrl.trim()}
         label={isSubmitting ? "Connecting..." : "Connect"}
-        helperText="The app stores the backend URL and session securely on this device."
+        helperText="The app stores the endpoint and optional bearer token securely on this device."
         onPress={() => {
           void handleConnect();
         }}

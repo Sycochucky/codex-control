@@ -6,12 +6,10 @@ import { RuntimeControls } from "@/components/runtime-controls";
 import { ScreenShell } from "@/components/screen-shell";
 import { InlineNotice, LabeledInput, PrimaryButton, SecondaryButton } from "@/components/ui";
 import type { ThemeColors } from "@/constants/theme";
-import { getAppServerStatus } from "@/services/api";
 import { useRuntimeDefaults } from "@/services/runtime-defaults-context";
 import { useSession } from "@/services/session-context";
 import { useThemedStyles } from "@/services/theme-context";
 import type { AppServerModel, AppThread } from "@/types/app-server";
-import type { AppServerStatus } from "@/types/api";
 import { withWarmAppServerClient } from "@/utils/app-server-connect";
 import { withTimeout } from "@/utils/async-timeout";
 import { getFriendlyNetworkErrorMessage } from "@/utils/network";
@@ -41,6 +39,7 @@ export default function NewTaskScreen() {
     selectedWorkspaceLabel,
     selectedWorkspacePath,
     setSelectedWorkspace,
+    sharedToken,
     sessionToken,
   } = useSession();
   const { runtimeDefaults, isRuntimeDefaultsHydrated } = useRuntimeDefaults();
@@ -54,8 +53,6 @@ export default function NewTaskScreen() {
   const [threadLoadError, setThreadLoadError] = useState<string | null>(null);
   const [threadList, setThreadList] = useState<AppThread[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(false);
-  const [backendWorkspaceRoot, setBackendWorkspaceRoot] = useState<string | null>(null);
-  const [appServerStatus, setAppServerStatus] = useState<AppServerStatus | null>(null);
   const [models, setModels] = useState<AppServerModel[]>([]);
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeDefaults>(runtimeDefaults);
   const [showAdvancedRuntime, setShowAdvancedRuntime] = useState(false);
@@ -74,16 +71,12 @@ export default function NewTaskScreen() {
     selectedPath: selectedWorkspacePath,
     selectedLabel: selectedWorkspaceLabel,
     selectedSourceThreadId,
-    fallbackPath: backendWorkspaceRoot,
-    fallbackLabel: backendWorkspaceRoot ? "Backend default workspace" : null,
+    fallbackPath: null,
+    fallbackLabel: null,
   });
   const workspaceOptions = useMemo(() => deriveWorkspaceOptions(threadList), [threadList]);
-  const readinessTone = appServerStatus?.ready ? "success" : "neutral";
-  const readinessMessage = appServerStatus
-    ? appServerStatus.ready
-      ? `Codex App Server is ready on ${appServerStatus.listen_url}. Model: ${appServerStatus.model}.`
-      : `Backend reachable. Codex App Server is not ready yet on ${appServerStatus.listen_url}; it will spin up when the websocket path is used.`
-    : "Checking backend and Codex App Server readiness.";
+  const readinessTone = "success";
+  const readinessMessage = `Connected to Codex App Server at ${backendUrl}.`;
   const runtimeSelection = resolveRuntimeSelection({ saved: runtimeDraft, models });
 
   const selectedSourceText = workspaceTarget.source === "route"
@@ -156,7 +149,7 @@ export default function NewTaskScreen() {
     try {
       setIsLoadingThreads(true);
       setThreadLoadError(null);
-      const threads = await withWarmAppServerClient(backendUrl, sessionToken, async (client) => {
+      const threads = await withWarmAppServerClient(backendUrl, sharedToken, async (client) => {
         const [activeThreads, archivedThreads] = await Promise.all([
           client.listAllThreads({ archived: false }),
           client.listAllThreads({ archived: true }),
@@ -178,24 +171,7 @@ export default function NewTaskScreen() {
     } finally {
       setIsLoadingThreads(false);
     }
-  }, [backendUrl, sessionToken]);
-
-  const loadBackendWorkspace = useCallback(async () => {
-    if (!sessionToken) {
-      setBackendWorkspaceRoot(null);
-      setAppServerStatus(null);
-      return;
-    }
-
-    try {
-      const status = await getAppServerStatus(backendUrl, sessionToken);
-      setBackendWorkspaceRoot(status.workspace_root);
-      setAppServerStatus(status);
-    } catch {
-      setBackendWorkspaceRoot(null);
-      setAppServerStatus(null);
-    }
-  }, [backendUrl, sessionToken]);
+  }, [backendUrl, sessionToken, sharedToken]);
 
   const loadRuntimeModels = useCallback(async () => {
     if (!sessionToken) {
@@ -210,7 +186,7 @@ export default function NewTaskScreen() {
       setIsLoadingRuntime(true);
       setRuntimeLoadError(null);
       const modelsResponse = await withTimeout(
-        withWarmAppServerClient(backendUrl, sessionToken, async (client) =>
+        withWarmAppServerClient(backendUrl, sharedToken, async (client) =>
           client.listModels({ includeHidden: showHiddenModels }),
         ),
         NEW_THREAD_RUNTIME_LOAD_TIMEOUT_MS,
@@ -233,7 +209,7 @@ export default function NewTaskScreen() {
         setIsLoadingRuntime(false);
       }
     }
-  }, [backendUrl, sessionToken, showHiddenModels]);
+  }, [backendUrl, sessionToken, sharedToken, showHiddenModels]);
 
   useFocusEffect(
     useCallback(() => {
@@ -242,9 +218,8 @@ export default function NewTaskScreen() {
       }
 
       void loadThreads();
-      void loadBackendWorkspace();
       void loadRuntimeModels();
-    }, [loadBackendWorkspace, loadRuntimeModels, loadThreads, sessionToken]),
+    }, [loadRuntimeModels, loadThreads, sessionToken]),
   );
 
   if (!isHydrated || !isRuntimeDefaultsHydrated) {
@@ -262,8 +237,6 @@ export default function NewTaskScreen() {
     return <Redirect href="/connect" />;
   }
 
-  const authToken = sessionToken;
-
   async function handleCreate() {
     if (!title.trim()) {
       setError("Add a thread title so it is identifiable on the dashboard.");
@@ -273,7 +246,7 @@ export default function NewTaskScreen() {
     try {
       setIsSubmitting(true);
       setError(null);
-      const threadId = await withWarmAppServerClient(backendUrl, authToken, async (client) => {
+      const threadId = await withWarmAppServerClient(backendUrl, sharedToken, async (client) => {
         return await client.startThread({
           title: title.trim(),
           initialMessage: initialMessage.trim() || null,
@@ -303,14 +276,9 @@ export default function NewTaskScreen() {
   return (
     <ScreenShell
       title="Create Thread"
-      subtitle="Official Codex App Server build. Start a provider-backed task from the phone using the same backend as the desktop app."
+      subtitle="Start a provider-backed task from the phone using the official Codex App Server."
     >
       <InlineNotice tone={readinessTone}>{readinessMessage}</InlineNotice>
-      {appServerStatus ? (
-        <Text style={styles.meta}>
-          App Server PID: {appServerStatus.pid ?? "Not started"} | Workspace root: {appServerStatus.workspace_root}
-        </Text>
-      ) : null}
       <Text style={styles.sectionTitle}>Thread Workspace</Text>
       <Text style={styles.meta}>Source: {selectedSourceText}</Text>
       {workspaceTarget.source !== "default" ? (

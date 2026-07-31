@@ -1,4 +1,3 @@
-import { getAppServerStatus } from "@/services/api";
 import { AppServerClient, withAppServerClient } from "@/services/app-server";
 import type { AppServerNotification, AppServerRequest } from "@/types/app-server";
 
@@ -14,16 +13,12 @@ function shouldRetry(error: unknown) {
   return (
     message.includes("Codex App Server request timed out while waiting for initialize") ||
     message.includes("Codex App Server connection closed during startup") ||
-    message.includes("Codex App Server connection failed")
+    message.includes("Codex App Server connection failed") ||
+    message.includes("Server overloaded; retry later")
   );
 }
 
-async function warmAppServer(baseUrl: string, token: string) {
-  try {
-    await getAppServerStatus(baseUrl, token);
-  } catch {
-    // Ignore status failures during warmup; the retry path will surface the final error.
-  }
+async function waitBeforeRetry() {
   await delay(APP_SERVER_RETRY_DELAY_MS);
 }
 
@@ -42,7 +37,7 @@ export async function withWarmAppServerClient<T>(
       if (!shouldRetry(error) || attempt === APP_SERVER_RETRY_ATTEMPTS - 1) {
         throw error;
       }
-      await warmAppServer(baseUrl, token);
+      await waitBeforeRetry();
     }
   }
 
@@ -68,7 +63,7 @@ export async function connectWarmAppServer(
       if (!shouldRetry(error) || attempt === APP_SERVER_RETRY_ATTEMPTS - 1) {
         throw error;
       }
-      await warmAppServer(baseUrl, token);
+      await waitBeforeRetry();
     }
   }
 

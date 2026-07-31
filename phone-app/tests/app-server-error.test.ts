@@ -49,7 +49,7 @@ test("formatAppServerErrorMessage preserves existing network guidance for networ
     "Failed to load App Server thread.",
   );
 
-  assert.match(message, /could not reach the local Codex gateway/i);
+  assert.match(message, /could not reach the Codex App Server remote endpoint/i);
 });
 
 test("formatAppServerErrorMessage preserves non-limit string errors", () => {

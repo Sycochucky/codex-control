@@ -78,6 +78,7 @@ export default function ThreadDetailScreen() {
     sessionRestoreState,
     sessionToken,
     setSelectedWorkspace,
+    sharedToken,
   } = useSession();
   const { runtimeDefaults, isRuntimeDefaultsHydrated } = useRuntimeDefaults();
   const [thread, setThread] = useState<AppThread | null>(null);
@@ -107,7 +108,7 @@ export default function ThreadDetailScreen() {
   const modelRequestIdRef = useRef(0);
   const threadReadRequestIdRef = useRef(0);
   const threadId = params.id ?? "";
-  const authToken = sessionToken ?? "";
+  const authToken = sharedToken;
   const isArchivedView = params.view === "archived";
   const replyRuntimeSelection = resolveRuntimeSelection({ saved: replyRuntimeDraft, models });
 
@@ -186,7 +187,7 @@ export default function ThreadDetailScreen() {
         const message = formatAppServerErrorMessage(error, "Failed to load App Server thread.");
         setError(
           message.includes("timed out while waiting for initialize")
-            ? "Codex App Server is still starting on the desktop. Open the thread again in a moment."
+            ? "Codex App Server is still starting. Open the thread again in a moment."
             : message,
         );
         setConnectionState("disconnected");
@@ -207,7 +208,7 @@ export default function ThreadDetailScreen() {
         void client.close();
       }
     };
-  }, [authToken, backendUrl, threadId]);
+  }, [authToken, backendUrl, sessionToken, threadId]);
 
   useEffect(() => {
     const client = clientRef.current;
@@ -680,7 +681,7 @@ export default function ThreadDetailScreen() {
       {sessionRestoreState === "reconnecting" ? (
         <>
           <InlineNotice tone="error">
-            The current thread is loaded from saved phone app state, but the backend is unreachable.
+            The current thread is loaded from saved phone app state, but the Codex remote endpoint is unreachable.
           </InlineNotice>
           <PrimaryButton label="Retry Session Validation" onPress={retrySessionValidation} />
         </>
@@ -1196,7 +1197,7 @@ function getLiveThreadStatus(input: {
 }): LiveThreadStatus {
   if (input.connectionState === "disconnected" || input.error) {
     return {
-      text: "Disconnected or error. Check the error message, then reconnect or retry when the desktop server is ready.",
+      text: "Disconnected or error. Check the error message, then reconnect or retry when Codex remote control is ready.",
       tone: "error",
     };
   }

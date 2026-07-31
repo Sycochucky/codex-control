@@ -28,7 +28,7 @@ import type {
 } from "../types/app-server";
 import type { RuntimeDefaults } from "../utils/runtime-defaults";
 import { DEFAULT_RUNTIME_DEFAULTS, buildThreadStartPayload, buildTurnStartPayload } from "../utils/runtime-defaults";
-import { normalizeGatewayUrl } from "../utils/network";
+import { normalizeAppServerEndpoint } from "../utils/network";
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -40,21 +40,62 @@ type AppServerClientOptions = {
   connectTimeoutMs?: number;
 };
 
+type NativeWebSocketConstructor = new (
+  url: string,
+  protocols?: string | string[],
+  options?: { headers?: Record<string, string> },
+) => WebSocket;
+
 const APP_SERVER_REQUEST_TIMEOUT_MS = 30000;
 const APP_SERVER_INITIALIZE_TIMEOUT_MS = 60000;
 const APP_SERVER_CONNECT_TIMEOUT_MS = 10000;
 
 type TurnInput = string | AppUserInput[];
 
-function toAppServerWsUrl(baseUrl: string, token: string) {
-  const normalized = normalizeGatewayUrl(baseUrl);
-  const url = normalized.startsWith("https://")
-    ? `wss://${normalized.slice("https://".length)}`
-    : normalized.startsWith("http://")
-      ? `ws://${normalized.slice("http://".length)}`
-      : normalized;
+export function toAppServerWsUrl(remoteUrl: string) {
+  const normalized = normalizeAppServerEndpoint(remoteUrl);
 
-  return `${url}/app-server/ws?token=${encodeURIComponent(token)}`;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol === "https:") {
+      parsed.protocol = "wss:";
+    } else if (parsed.protocol === "http:") {
+      parsed.protocol = "ws:";
+    }
+
+    if (parsed.protocol === "wss:" || parsed.protocol === "ws:") {
+      parsed.pathname = normalizeAppServerWsPath(parsed.pathname);
+      return parsed.toString();
+    }
+  } catch {
+    throw new Error("Codex App Server URL must start with ws://, wss://, http://, or https://.");
+  }
+
+  throw new Error("Codex App Server URL must start with ws://, wss://, http://, or https://.");
+}
+
+function normalizeAppServerWsPath(pathname: string) {
+  const trimmed = pathname.replace(/\/+$/, "");
+  if (!trimmed) {
+    return "/ws";
+  }
+
+  return trimmed.endsWith("/ws") ? trimmed : `${trimmed}/ws`;
+}
+
+function createAppServerWebSocket(remoteUrl: string, authToken?: string | null) {
+  const url = toAppServerWsUrl(remoteUrl);
+  const token = authToken?.trim();
+  if (!token) {
+    return new WebSocket(url);
+  }
+
+  const WebSocketConstructor = WebSocket as unknown as NativeWebSocketConstructor;
+  return new WebSocketConstructor(url, [], {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 }
 
 function toGrantedPermissionProfile(permissions: {
@@ -76,13 +117,13 @@ export class AppServerClient {
   private closeRequested = false;
 
   constructor(
-    baseUrl: string,
-    token: string,
+    remoteUrl: string,
+    authToken?: string | null,
     private readonly onNotification?: (notification: AppServerNotification) => void,
     private readonly onServerRequest?: (request: AppServerRequest) => void,
     private readonly options: AppServerClientOptions = {},
   ) {
-    this.socket = new WebSocket(toAppServerWsUrl(baseUrl, token));
+    this.socket = createAppServerWebSocket(remoteUrl, authToken);
   }
 
   async connect() {
@@ -164,16 +205,17 @@ export class AppServerClient {
       },
     });
     console.info("[AppServerClient] initialize response received; sending initialized");
-    this.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+    this.socket.send(JSON.stringify({ method: "initialized" }));
     this.initialized = true;
   }
 
-  async listThreads(params?: { archived?: boolean; limit?: number; cursor?: string | null }) {
+  async listThreads(params?: { archived?: boolean; limit?: number; cursor?: string | null; useStateDbOnly?: boolean }) {
     return (await this.request("thread/list", {
       limit: params?.limit ?? 100,
       sortKey: "updated_at",
       archived: params?.archived ?? false,
       cursor: params?.cursor ?? null,
+      useStateDbOnly: params?.useStateDbOnly ?? false,
     })) as AppThreadListResponse;
   }
 
@@ -491,7 +533,6 @@ export class AppServerClient {
   private respond(id: string | number, result: unknown) {
     this.socket.send(
       JSON.stringify({
-        jsonrpc: "2.0",
         id,
         result,
       }),
@@ -506,7 +547,6 @@ export class AppServerClient {
     const id = String(this.nextId++);
     console.info("[AppServerClient] sending request", method, id);
     const payload = {
-      jsonrpc: "2.0",
       id,
       method,
       params,
@@ -620,11 +660,11 @@ export class AppServerClient {
 }
 
 export async function withAppServerClient<T>(
-  baseUrl: string,
-  token: string,
+  remoteUrl: string,
+  authToken: string | null | undefined,
   run: (client: AppServerClient) => Promise<T>,
 ) {
-  const client = new AppServerClient(baseUrl, token);
+  const client = new AppServerClient(remoteUrl, authToken);
   try {
     await client.connect();
     return await run(client);

@@ -1,6 +1,6 @@
 param(
   [string]$DeviceSerial = $env:ANDROID_SERIAL,
-  [int]$BackendPort = 8010,
+  [int]$RemotePort = 8765,
   [int]$MetroPort = 8081
 )
 
@@ -28,12 +28,12 @@ if ($DeviceSerial) {
   $targetArgs = @("-s", $DeviceSerial)
 }
 
-& $adb @targetArgs reverse "tcp:$BackendPort" "tcp:$BackendPort" | Out-Null
+& $adb @targetArgs reverse "tcp:$RemotePort" "tcp:$RemotePort" | Out-Null
 if ($MetroPort -gt 0) {
   & $adb @targetArgs reverse "tcp:$MetroPort" "tcp:$MetroPort" | Out-Null
 }
 
-Write-Host "ADB reverse configured: backend tcp:$BackendPort"
+Write-Host "ADB reverse configured: Codex App Server tcp:$RemotePort"
 if ($MetroPort -gt 0) {
   Write-Host "ADB reverse configured: Metro tcp:$MetroPort"
 }

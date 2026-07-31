@@ -27,7 +27,7 @@ type ReviewStartParams = {
 export default function ReviewStartScreen() {
   const params = useLocalSearchParams<ReviewStartParams>();
   const router = useRouter();
-  const { backendUrl, isHydrated, sessionToken } = useSession();
+  const { backendUrl, isHydrated, sessionToken, sharedToken } = useSession();
   const defaults = useMemo(() => getReviewDefaults(params.threadId ?? ""), [params.threadId]);
   const [threadId, setThreadId] = useState(defaults.threadId);
   const [mode, setMode] = useState<ReviewTargetMode>(() => normalizeReviewTargetMode(params.targetMode, defaults.targetMode));
@@ -50,7 +50,7 @@ export default function ReviewStartScreen() {
     try {
       setIsSubmitting(true);
       setError(null);
-      const result = await withAppServerClient(backendUrl, sessionToken, async (client) => {
+      const result = await withAppServerClient(backendUrl, sharedToken, async (client) => {
         return await client.startReview(threadId.trim(), target, delivery);
       });
       router.replace({

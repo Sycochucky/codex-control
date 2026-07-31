@@ -1,25 +1,27 @@
-# Codex Control
+# Codex Android Remote Control
 
-Codex Control is a local-first Android command center for Codex. It pairs an installable React Native phone app with a FastAPI desktop bridge so you can browse threads, continue work, run safe Git actions, and inspect local setup from your phone.
+Codex Android Remote Control is a local-first Expo / React Native Android client for the official Codex App Server. The normal runtime path is:
 
-The app is designed for your own machine, home network, USB debugging, or VPN. Do not expose the desktop server directly to the public internet.
+```text
+phone-app -> official Codex remote-control/App Server -> Codex
+```
+
+The app is designed for your own machine, home network, USB debugging, VPN, or a short-lived development tunnel. Do not expose an unauthenticated Codex App Server endpoint to the public internet.
 
 ## Features
 
 - Browse active and archived Codex App Server threads grouped by project, with the most recently updated projects and threads first.
 - Continue threads and send follow-up input from Android.
-- View thread metadata, workspace, Git branch, commit, and token usage when available.
-- Run workspace-aware Git actions through the desktop bridge.
-- Create local/GitHub repository setup plans with public/private repo choices and `.gitignore` templates.
-- Inspect Codex, Git, GitHub CLI, model, account, plugin, skill, and rate-limit status.
-- Start a quick development tunnel for temporary out-of-house phone testing.
+- View thread metadata, workspace, Git branch, commit, status, and token usage when available.
+- Run workspace-aware Git actions through the official App Server JSON-RPC surface.
+- Inspect Codex models, accounts, config, loaded threads, and command output through App Server calls.
+- Start a quick development tunnel for temporary out-of-house phone testing against the official endpoint.
 - Show clearer connection, waiting, refresh, rate-limit, quota, and context-window status messages.
-- Use a local desktop bridge instead of placing Codex credentials on the phone.
 
 ## Project Layout
 
-- `phone-app/` - Expo Router / React Native Android app.
-- `desktop-server/` - FastAPI bridge for auth, setup checks, GitHub login, and App Server WebSocket proxying.
+- `phone-app/` - active Expo Router / React Native Android remote-control app.
+- `desktop-server/` - legacy FastAPI bridge kept for compatibility while the direct App Server path is tested; it is not part of the normal Android runtime path.
 - `scripts/` - repo-level setup and verification helpers.
 - `docs/` - design notes and implementation plans.
 
@@ -29,34 +31,36 @@ Generated Android projects, APKs, local databases, runtime logs, `node_modules`,
 
 - Windows PowerShell.
 - Node.js 20+ and npm.
-- Python 3.11+.
 - Git.
-- GitHub CLI (`gh`) for GitHub setup actions.
-- Codex CLI installed and authenticated.
+- GitHub CLI (`gh`) for GitHub actions surfaced by the App Server.
+- Codex CLI installed and authenticated. This repo is currently aligned with `codex-cli 0.146.0`.
 - Android Studio / Android SDK for local Android builds, or EAS for cloud builds.
 
 ## Quick Start
 
-Install desktop and phone dependencies:
+Install dependencies:
 
 ```powershell
 .\scripts\setup-dev.ps1
 ```
 
-Start the desktop bridge:
+Start the official Codex remote-control endpoint:
 
 ```powershell
-cd desktop-server
-.\start-real-codex-server.ps1 -Port 8010 -SharedToken "codex-dev"
+codex remote-control start
 ```
 
-The desktop server listens on `http://0.0.0.0:8010`. Port `8010` is the default to avoid common Docker use of port `8000`.
+For local development you can also start an explicit websocket listener:
 
-For a USB-attached Android device, forward the backend port:
+```powershell
+codex app-server --listen ws://127.0.0.1:8765 --ws-auth capability-token
+```
+
+For a USB-attached Android device, forward the App Server port:
 
 ```powershell
 cd phone-app
-.\scripts\configure-android-local.ps1 -BackendPort 8010
+.\scripts\configure-android-local.ps1 -RemotePort 8765
 ```
 
 Install and run the Android app:
@@ -68,30 +72,30 @@ npm run android:local
 
 Open the app and connect with:
 
-- Backend URL: `http://127.0.0.1:8010` when using ADB reverse.
-- Shared token: `codex-dev` unless you changed it.
+- Codex App Server URL: `ws://127.0.0.1:8765` when using ADB reverse. The app automatically targets the official `/ws` websocket path.
+- Bearer Token: optional; use the official websocket auth token when your listener requires one.
 
-For LAN or VPN access, use `http://<desktop-lan-ip>:8010` and make sure your firewall allows the desktop server port.
+For LAN or VPN access, use `ws://<desktop-lan-ip>:8765` or a secure `wss://` endpoint and make sure your firewall allows only trusted devices.
 
 ### Quick Tunnel Testing
 
-For temporary out-of-house development testing, start a tunnel to the desktop bridge:
+For temporary out-of-house development testing, start a tunnel to the official App Server endpoint:
 
 ```powershell
 cd phone-app
 .\scripts\quick-tunnel.ps1 -Start
 ```
 
-The helper defaults to `cloudflared` and targets `http://127.0.0.1:8010`. It prints the public HTTPS URL and the phone-app environment variable to use:
+The helper defaults to `cloudflared` and targets `http://127.0.0.1:8765`. It prints the public HTTPS URL and the phone-app environment variable to use:
 
 ```powershell
-$env:EXPO_PUBLIC_CODEX_TUNNEL_URL = "https://<your-tunnel>.trycloudflare.com"
+$env:EXPO_PUBLIC_CODEX_REMOTE_URL = "https://<your-tunnel>.trycloudflare.com"
 npm run android:local
 ```
 
-`EXPO_PUBLIC_CODEX_BACKEND_URL` still takes priority when set. Otherwise `EXPO_PUBLIC_CODEX_TUNNEL_URL` overrides saved backend URLs, which keeps a development build pointed at the temporary tunnel without manually clearing phone storage.
+`EXPO_PUBLIC_CODEX_REMOTE_URL` takes priority over older backend/tunnel variables and saved phone settings.
 
-Quick tunnels are for short development sessions only. Stop the tunnel when you are done and do not expose the desktop bridge with the default shared token outside a trusted test window.
+Quick tunnels are for short development sessions only. Stop the tunnel when you are done and use the official App Server websocket auth mode for anything beyond trusted local testing.
 
 ## Useful Commands
 
@@ -109,11 +113,10 @@ npm run typecheck
 npm run test:logic
 ```
 
-Run desktop tests only:
+Regenerate protocol bindings from the installed Codex CLI:
 
 ```powershell
-cd desktop-server
-py -3 -m unittest discover -s tests
+codex app-server generate-ts --out phone-app\generated\app-server
 ```
 
 Build a local release APK:
@@ -131,45 +134,26 @@ phone-app/android/app/build/outputs/apk/release/app-release.apk
 
 ## Configuration
 
-The desktop server uses environment variables:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CODEX_PROVIDER` | `mock-codex` | Use `real-codex` to call the local Codex CLI. |
-| `CODEX_CONTROL_SHARED_TOKEN` | `codex-dev` | Shared login token used by the phone app. |
-| `CODEX_WORKSPACE_ROOT` | repo parent | Workspace root allowed to the bridge. |
-| `CODEX_CLI_SANDBOX` | `workspace-write` | Sandbox mode passed to Codex CLI work. |
-| `CODEX_CLI_EPHEMERAL` | `true` | Whether Codex CLI sessions are ephemeral. |
-| `CODEX_MODEL` | `gpt-5.4` | Default model for new Codex work. |
-
-For local development, you can also set phone build defaults:
+For local development, set phone build defaults when needed:
 
 ```powershell
-$env:EXPO_PUBLIC_CODEX_BACKEND_PORT = "8010"
-$env:EXPO_PUBLIC_CODEX_BACKEND_URL = "http://127.0.0.1:8010"
-$env:EXPO_PUBLIC_CODEX_TUNNEL_URL = "https://<your-tunnel>.trycloudflare.com"
+$env:EXPO_PUBLIC_CODEX_REMOTE_URL = "ws://127.0.0.1:8765"
+$env:EXPO_PUBLIC_CODEX_BACKEND_PORT = "8765"
 ```
 
-The explicit backend URL wins over the tunnel URL and port default. The tunnel URL wins over saved phone backend settings when the app hydrates a session.
+Older `EXPO_PUBLIC_CODEX_BACKEND_URL` and `EXPO_PUBLIC_CODEX_TUNNEL_URL` values are still accepted as migration aliases, but new work should use `EXPO_PUBLIC_CODEX_REMOTE_URL`.
 
-## Control Panel
+## Legacy Bridge
 
-The desktop server includes a small local control panel:
-
-```powershell
-cd desktop-server
-.\start-control-panel-gui.ps1
-```
-
-It can start/stop the backend, run phone app checks, and manage local build jobs. It is a local operator tool, not a hosted service.
+`desktop-server/` is deprecated for the Android remote-control path. Keep it untouched for now unless you are working on a compatibility fix or the follow-up cleanup PR that removes the legacy bridge.
 
 ## Security Notes
 
-- Change `CODEX_CONTROL_SHARED_TOKEN` before using this beyond your own test machine.
-- Keep the server on a trusted LAN, VPN, or USB reverse path.
-- Do not commit `.env`, runtime logs, local databases, APKs, or generated Android build output.
-- Review the desktop bridge before enabling broader filesystem or network access.
+- Prefer `ws://127.0.0.1:8765` with ADB reverse, LAN/VPN, or `wss://` through a trusted tunnel.
+- Use the official App Server websocket auth mode for non-loopback listeners.
+- Do not commit `.env`, runtime logs, local databases, APKs, generated Android build output, or websocket auth tokens.
+- Do not expose the official App Server endpoint publicly without authentication and network controls.
 
 ## Current Status
 
-This is an early public release. Android local install, desktop bridge startup, project-grouped thread browsing, App Server WebSocket proxying, Git surfaces, setup checks, quick tunnel smoke testing, and logic tests are working in the current development environment.
+The Android app now targets the official Codex App Server / remote-control path by default. The legacy FastAPI bridge remains in the repo temporarily but is not required for thread browsing or control in the normal app flow.

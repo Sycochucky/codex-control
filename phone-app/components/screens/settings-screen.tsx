@@ -6,14 +6,13 @@ import { RuntimeControls } from "@/components/runtime-controls";
 import { ScreenShell } from "@/components/screen-shell";
 import { InlineNotice, LabeledInput, PillButton, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { themePresets, type ThemeColors } from "@/constants/theme";
-import { getAppServerStatus, logout as logoutRequest } from "@/services/api";
 import { withAppServerClient } from "@/services/app-server";
 import { useRuntimeDefaults } from "@/services/runtime-defaults-context";
 import { useSession } from "@/services/session-context";
 import { useTheme, useThemedStyles } from "@/services/theme-context";
 import type { AppServerModel } from "@/types/app-server";
 import { withTimeout } from "@/utils/async-timeout";
-import { getFriendlyNetworkErrorMessage, isValidBackendUrl } from "@/utils/network";
+import { getFriendlyNetworkErrorMessage, isValidAppServerEndpoint } from "@/utils/network";
 import {
   buildDesktopModelConfigWrite,
   normalizeRuntimeDefaults,
@@ -85,15 +84,11 @@ export function SettingsScreen() {
     try {
       setIsRefreshing(true);
       setError(null);
-      const status = await getAppServerStatus(backendUrl, sessionToken);
-      setStatusSummary(
-        status.ready
-          ? `App Server ready on ${status.listen_url}`
-          : `Backend reachable on ${status.listen_url}, App Server still starting`,
+      const loadedThreads = await withAppServerClient(backendUrl, sharedToken, async (client) =>
+        client.call<{ data?: string[] }>("thread/loaded/list", undefined),
       );
-      setStatusDetail(
-        `Workspace root: ${status.workspace_root} | Model: ${status.model} | PID: ${status.pid ?? "Not started"}`,
-      );
+      setStatusSummary(`Connected to Codex App Server at ${backendUrl}`);
+      setStatusDetail(`Loaded threads: ${loadedThreads.data?.length ?? 0}`);
     } catch (statusError) {
       setStatusSummary(null);
       setStatusDetail(null);
@@ -101,7 +96,7 @@ export function SettingsScreen() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [backendUrl, sessionToken]);
+  }, [backendUrl, sessionToken, sharedToken]);
 
   const loadCommandCenter = useCallback(async () => {
     if (!sessionToken) {
@@ -119,7 +114,7 @@ export function SettingsScreen() {
       setIsLoadingCommandCenter(true);
       setError(null);
       const result = await withTimeout(
-        withAppServerClient(backendUrl, sessionToken, async (client) => {
+        withAppServerClient(backendUrl, sharedToken, async (client) => {
           const [modelsResponse, account, rateLimits, config] = await Promise.all([
             client.listModels({ includeHidden: showHiddenModels }),
             client.getAccount(true),
@@ -159,7 +154,7 @@ export function SettingsScreen() {
         setIsLoadingCommandCenter(false);
       }
     }
-  }, [backendUrl, sessionToken, showHiddenModels]);
+  }, [backendUrl, sessionToken, sharedToken, showHiddenModels]);
 
   useFocusEffect(
     useCallback(() => {
@@ -172,13 +167,8 @@ export function SettingsScreen() {
     const nextBackendUrl = draftBackendUrl.trim();
     const nextSharedToken = draftSharedToken.trim();
 
-    if (!nextBackendUrl || !isValidBackendUrl(nextBackendUrl)) {
-      setError("Enter a full backend URL starting with http:// or https://.");
-      return;
-    }
-
-    if (!nextSharedToken) {
-      setError("Enter the shared token configured on the desktop server.");
+    if (!nextBackendUrl || !isValidAppServerEndpoint(nextBackendUrl)) {
+      setError("Enter a full Codex App Server endpoint starting with ws://, wss://, http://, or https://.");
       return;
     }
 
@@ -192,7 +182,7 @@ export function SettingsScreen() {
       setSharedToken(nextSharedToken);
 
       if (connectionChanged) {
-        setNotice("Connection settings saved. Reconnect with the updated gateway details.");
+        setNotice("Connection settings saved. Reconnect with the updated Codex remote details.");
         router.replace("/connect");
         return;
       }
@@ -212,7 +202,6 @@ export function SettingsScreen() {
     try {
       setIsSigningOut(true);
       setError(null);
-      await logoutRequest(backendUrl, sessionToken).catch(() => undefined);
       logout();
       router.replace("/connect");
     } finally {
@@ -282,7 +271,7 @@ export function SettingsScreen() {
       setIsApplyingDesktopConfig(true);
       setError(null);
       setNotice(null);
-      await withAppServerClient(backendUrl, sessionToken, async (client) => {
+      await withAppServerClient(backendUrl, sharedToken, async (client) => {
         await client.writeConfigBatch(payload);
       });
       setNotice("Desktop Codex model config updated and reloaded.");
@@ -310,12 +299,12 @@ export function SettingsScreen() {
   return (
     <ScreenShell
       title="Settings"
-      subtitle="Manage the local Codex gateway connection for the official phone companion."
+      subtitle="Manage the official Codex remote-control connection."
     >
       {sessionRestoreState === "reconnecting" ? (
         <>
           <InlineNotice tone="error">
-            The phone app kept your saved session, but the desktop backend is currently unreachable.
+            The phone app kept your saved connection, but the Codex remote endpoint is currently unreachable.
           </InlineNotice>
           <PrimaryButton label="Retry Session Validation" onPress={retrySessionValidation} />
         </>
@@ -384,14 +373,14 @@ export function SettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Connection</Text>
         <LabeledInput
-          label="Backend URL"
+          label="Codex App Server URL"
           autoCapitalize="none"
           autoCorrect={false}
           onChangeText={setDraftBackendUrl}
           value={draftBackendUrl}
         />
         <LabeledInput
-          label="Shared Token"
+          label="Bearer Token (Optional)"
           autoCapitalize="none"
           autoCorrect={false}
           onChangeText={setDraftSharedToken}
@@ -399,15 +388,15 @@ export function SettingsScreen() {
           value={draftSharedToken}
         />
         <Text style={styles.meta}>
-          Saving a different backend URL or shared token ends the current session and sends you
+          Saving a different remote URL or bearer token ends the current session and sends you
           back to Connect.
         </Text>
         <Text style={styles.meta}>
-          For quick tunnel access, paste the public HTTPS tunnel URL as the Backend URL. Keep
-          the same shared token.
+          Use an official `codex remote-control` or `codex app-server --listen ws://...` endpoint.
+          The custom desktop bridge is not used for this path.
         </Text>
         <PrimaryButton
-          disabled={isSaving || !draftBackendUrl.trim() || !draftSharedToken.trim()}
+          disabled={isSaving || !draftBackendUrl.trim()}
           label={isSaving ? "Saving..." : "Save Connection"}
           onPress={() => {
             void handleSaveConnection();
@@ -424,7 +413,7 @@ export function SettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Session</Text>
         <Text style={styles.meta}>Restore state: {sessionRestoreState}</Text>
-        <Text style={styles.meta}>Gateway URL: {backendUrl}</Text>
+        <Text style={styles.meta}>Remote URL: {backendUrl}</Text>
         <SecondaryButton label="Open Threads" onPress={() => router.push("/threads")} />
         <SecondaryButton
           disabled={isSigningOut}

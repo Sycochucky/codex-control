@@ -1,22 +1,20 @@
-export function normalizeGatewayUrl(value: string) {
+export function normalizeAppServerEndpoint(value: string) {
   return value.trim().replace(/\/+$/, "");
 }
 
-export function isValidGatewayUrl(value: string) {
-  const normalized = normalizeGatewayUrl(value);
+export function isValidAppServerEndpoint(value: string) {
+  const normalized = normalizeAppServerEndpoint(value);
   if (!normalized) {
     return false;
   }
 
   try {
     const parsed = new URL(normalized);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    return ["http:", "https:", "ws:", "wss:"].includes(parsed.protocol);
   } catch {
     return false;
   }
 }
-
-export const isValidBackendUrl = isValidGatewayUrl;
 
 export function getFriendlyNetworkErrorMessage(error: unknown, fallbackMessage: string) {
   if (error instanceof Error) {
@@ -28,7 +26,7 @@ export function getFriendlyNetworkErrorMessage(error: unknown, fallbackMessage: 
       lowered.includes("networkerror") ||
       lowered.includes("load failed")
     ) {
-      return "The phone app could not reach the local Codex gateway. Check the URL, confirm the desktop server is running, and make sure the device can reach it over the network.";
+      return "The phone app could not reach the Codex App Server remote endpoint. Check the URL, confirm Codex remote control is running, and make sure this device can reach it over the network.";
     }
 
     return error.message;

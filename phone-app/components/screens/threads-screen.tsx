@@ -41,7 +41,7 @@ export function ThreadsScreen() {
   const params = useLocalSearchParams<{ view?: string }>();
   const router = useRouter();
   const styles = useThemedStyles(createStyles);
-  const { backendUrl, isHydrated, retrySessionValidation, sessionRestoreState, sessionToken } =
+  const { backendUrl, isHydrated, retrySessionValidation, sessionRestoreState, sessionToken, sharedToken } =
     useSession();
   const requestSequence = useRef(0);
   const [paging, setPaging] = useState(() => createThreadPagingState<AppThread>());
@@ -100,7 +100,7 @@ export function ThreadsScreen() {
 
     try {
       const page = await withTimeout(
-        withWarmAppServerClient(backendUrl, sessionToken, async (client) => {
+        withWarmAppServerClient(backendUrl, sharedToken, async (client) => {
           return await client.listThreads({
             archived: listMode === "archived",
             cursor: request.cursor,
@@ -127,7 +127,7 @@ export function ThreadsScreen() {
         }),
       );
     }
-  }, [backendUrl, listMode, sessionToken]);
+  }, [backendUrl, listMode, sessionToken, sharedToken]);
 
   useEffect(() => {
     if (!isHydrated || !sessionToken) {
@@ -152,13 +152,13 @@ export function ThreadsScreen() {
   return (
     <ScreenShell
       title="Threads"
-      subtitle="Official Codex App Server build. Review recent threads, live workload buckets, and token usage from the desktop bridge."
+      subtitle="Review recent threads, live workload buckets, and token usage from the official Codex App Server."
     >
       {sessionRestoreState === "reconnecting" ? (
         <>
           <InlineNotice tone="error">
-            The backend is currently unreachable. Your saved session is still present and can be
-            revalidated when the desktop server is back online.
+            The Codex remote endpoint is currently unreachable. Your saved connection is still
+            present and can be revalidated when remote control is back online.
           </InlineNotice>
           <PrimaryButton label="Retry Session Validation" onPress={retrySessionValidation} />
         </>

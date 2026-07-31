@@ -316,6 +316,13 @@ export type AppServerNotification =
   | { method: "thread/unarchived"; params: { threadId: string } }
   | { method: "thread/name/updated"; params: { threadId: string; threadName?: string } }
   | { method: "thread/status/changed"; params: { threadId: string; status: AppThreadStatus } }
+  | {
+      method: "remoteControl/status/changed";
+      params: {
+        status: "disabled" | "connecting" | "connected" | "errored";
+        environmentId: string | null;
+      };
+    }
   | { method: "thread/tokenUsage/updated"; params: { threadId: string; turnId: string; tokenUsage: AppThreadTokenUsage } }
   | { method: "turn/started"; params: { threadId: string; turn: AppTurn } }
   | { method: "turn/completed"; params: { threadId: string; turn: AppTurn } }

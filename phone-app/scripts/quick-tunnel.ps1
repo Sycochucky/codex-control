@@ -1,30 +1,29 @@
 param(
   [ValidateSet("cloudflared", "ngrok")]
   [string]$Provider = "cloudflared",
-  [int]$BackendPort = 8010,
-  [string]$SharedToken = "codex-dev",
+  [int]$RemotePort = 8765,
   [switch]$Start
 )
 
 $ErrorActionPreference = "Stop"
 
-$targetUrl = "http://127.0.0.1:$BackendPort"
+$targetUrl = "http://127.0.0.1:$RemotePort"
 $commandArgsByProvider = @{
   cloudflared = @("tunnel", "--url", $targetUrl)
-  ngrok = @("http", "$BackendPort")
+  ngrok = @("http", "$RemotePort")
 }
 
 $commandArgs = $commandArgsByProvider[$Provider]
 $commandText = "$Provider $($commandArgs -join ' ')"
 
-Write-Host "Desktop server target: $targetUrl"
-Write-Host "Shared token expected by phone app: $SharedToken"
+Write-Host "Codex App Server target: $targetUrl"
 Write-Host ""
 Write-Host "Tunnel command:"
 Write-Host "  $commandText"
 Write-Host ""
-Write-Host "Paste the resulting HTTPS tunnel URL into the phone app Backend URL."
-Write-Host "Or start Expo with EXPO_PUBLIC_CODEX_TUNNEL_URL set to that HTTPS URL."
+Write-Host "Paste the resulting HTTPS tunnel URL into the phone app Codex App Server URL."
+Write-Host "Or start Expo with EXPO_PUBLIC_CODEX_REMOTE_URL set to that HTTPS URL."
+Write-Host "Start Codex first with: codex remote-control"
 
 if (-not $Start) {
   return

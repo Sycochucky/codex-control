@@ -9,13 +9,9 @@ import {
   useState,
 } from "react";
 
-import { getCurrentSession } from "@/services/api";
-import { setUnauthorizedHandler } from "@/services/auth-events";
+import { withAppServerClient } from "@/services/app-server";
 import { getStoredValue, setStoredValue } from "@/services/secure-storage";
-import {
-  type SessionRestoreState,
-  getSessionValidationOutcome,
-} from "@/utils/session-restore";
+import { type SessionRestoreState } from "@/utils/session-restore";
 import Constants from "expo-constants";
 import { getDefaultBackendUrl, hasExplicitDefaultBackendUrl } from "@/utils/default-backend-url";
 import { getWorkspaceLabel, normalizeWorkspacePath } from "@/utils/workspace-target";
@@ -50,9 +46,13 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 const BACKEND_URL_KEY = "codex-control.backend-url";
 const SHARED_TOKEN_KEY = "codex-control.shared-token";
 const SESSION_TOKEN_KEY = "codex-control.session-token";
+const CONNECTED_SESSION_MARKER = "official-codex-app-server";
+const LEGACY_SHARED_TOKEN = "codex-dev";
 const LEGACY_DEFAULT_BACKEND_URLS = new Set([
   "http://127.0.0.1:8000",
   "http://localhost:8000",
+  "http://127.0.0.1:8010",
+  "http://localhost:8010",
 ]);
 
 const constantsWithHost = Constants as unknown as {
@@ -61,6 +61,7 @@ const constantsWithHost = Constants as unknown as {
 };
 
 const defaultBackendUrl = getDefaultBackendUrl({
+  envRemoteUrl: process.env.EXPO_PUBLIC_CODEX_REMOTE_URL,
   envUrl: process.env.EXPO_PUBLIC_CODEX_BACKEND_URL,
   envTunnelUrl: process.env.EXPO_PUBLIC_CODEX_TUNNEL_URL,
   envPort: process.env.EXPO_PUBLIC_CODEX_BACKEND_PORT,
@@ -71,13 +72,14 @@ const defaultBackendUrl = getDefaultBackendUrl({
     typeof window === "undefined" ? null : window.location?.hostname,
 });
 const hasBackendUrlEnvironmentOverride = hasExplicitDefaultBackendUrl({
+  envRemoteUrl: process.env.EXPO_PUBLIC_CODEX_REMOTE_URL,
   envUrl: process.env.EXPO_PUBLIC_CODEX_BACKEND_URL,
   envTunnelUrl: process.env.EXPO_PUBLIC_CODEX_TUNNEL_URL,
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [backendUrl, setBackendUrlState] = useState(defaultBackendUrl);
-  const [sharedToken, setSharedTokenState] = useState("codex-dev");
+  const [sharedToken, setSharedTokenState] = useState("");
   const [sessionToken, setSessionTokenState] = useState<string | null>(null);
   const [selectedWorkspacePath, setSelectedWorkspacePath] = useState<string | null>(null);
   const [selectedWorkspaceLabel, setSelectedWorkspaceLabel] = useState<string | null>(null);
@@ -101,40 +103,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const validateSessionToken = useCallback(async (candidateBackendUrl: string, candidateToken: string) => {
+  const validateSessionToken = useCallback(async (candidateBackendUrl: string, candidateAuthToken: string | null) => {
     try {
-      await getCurrentSession(candidateBackendUrl, candidateToken);
+      await withAppServerClient(candidateBackendUrl, candidateAuthToken, async () => undefined);
       startTransition(() => {
         setSessionRestoreState("ready");
       });
       return true;
     } catch (error) {
-      const outcome = getSessionValidationOutcome(error);
-      if (outcome === "invalid") {
-        await setStoredValue(SESSION_TOKEN_KEY, null);
-        startTransition(() => {
-          setSessionTokenState(null);
-          setSessionRestoreState("ready");
-        });
-        return false;
-      }
-
       startTransition(() => {
         setSessionRestoreState("reconnecting");
       });
       return false;
     }
   }, []);
-
-  useEffect(() => {
-    setUnauthorizedHandler(() => {
-      clearSessionState();
-    });
-
-    return () => {
-      setUnauthorizedHandler(null);
-    };
-  }, [clearSessionState]);
 
   useEffect(() => {
     let isMounted = true;
@@ -154,11 +136,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         storedBackendUrl && !LEGACY_DEFAULT_BACKEND_URLS.has(storedBackendUrl) && !hasBackendUrlEnvironmentOverride
           ? storedBackendUrl
           : defaultBackendUrl;
+      const migratedSharedToken = storedSharedToken === LEGACY_SHARED_TOKEN ? "" : storedSharedToken;
 
       setBackendUrlState(restoredBackendUrl);
 
-      if (storedSharedToken) {
-        setSharedTokenState(storedSharedToken);
+      if (migratedSharedToken) {
+        setSharedTokenState(migratedSharedToken);
       }
 
       if (storedSessionToken) {
@@ -170,7 +153,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (storedSessionToken) {
         const didValidate = await validateSessionToken(
           restoredBackendUrl,
-          storedSessionToken,
+          migratedSharedToken,
         );
         if (!didValidate && !isMounted) {
           return;
@@ -249,7 +232,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       },
       setSessionToken(value) {
         startTransition(() => {
-          setSessionTokenState(value);
+          setSessionTokenState(value ? CONNECTED_SESSION_MARKER : null);
           setSessionRestoreState("ready");
         });
       },
@@ -277,7 +260,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        void validateSessionToken(backendUrl, sessionToken);
+        void validateSessionToken(backendUrl, sharedToken);
       },
     }),
     [
@@ -296,6 +279,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+}
+
+export function createConnectedSessionToken() {
+  return CONNECTED_SESSION_MARKER;
 }
 
 export function useSession() {

@@ -1,4 +1,4 @@
-import { Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   type Dispatch,
   type SetStateAction,
@@ -18,7 +18,6 @@ import {
   SecondaryButton,
 } from "@/components/ui";
 import { colors } from "@/constants/theme";
-import { getAppServerStatus } from "@/services/api";
 import { AppServerClient, withAppServerClient } from "@/services/app-server";
 import { useSession } from "@/services/session-context";
 import type {
@@ -77,9 +76,9 @@ export function ToolsScreen() {
     isHydrated,
     retrySessionValidation,
     sessionRestoreState,
+    sharedToken,
     sessionToken,
   } = useSession();
-  const [backendWorkspaceRoot, setBackendWorkspaceRoot] = useState<string | null>(null);
   const [toolsGroup, setToolsGroup] = useState<ToolsGroup>("workbench");
   const [mode, setMode] = useState<ToolsMode>("terminal");
   const [surfaceState, setSurfaceState] = useState<SurfaceState>({});
@@ -115,17 +114,17 @@ export function ToolsScreen() {
     selectedPath: selectedWorkspacePath,
     selectedLabel: selectedWorkspaceLabel,
     selectedSourceThreadId,
-    fallbackPath: backendWorkspaceRoot,
-    fallbackLabel: backendWorkspaceRoot ? "Backend default workspace" : null,
+    fallbackPath: null,
+    fallbackLabel: null,
   });
-  const workspaceRoot = workspaceTarget.path ?? backendWorkspaceRoot;
+  const workspaceRoot = workspaceTarget.path;
 
   const workspaceSourceText =
     workspaceTarget.source === "route"
       ? "Selected by route"
       : workspaceTarget.source === "selected"
         ? "Selected in workspace hub"
-        : "Backend default";
+        : "No workspace selected";
 
   useEffect(() => {
     if (routeWorkspaceThreadId) {
@@ -146,7 +145,7 @@ export function ToolsScreen() {
         return;
       }
 
-      const client = new AppServerClient(backendUrl, sessionToken, (notification) => {
+      const client = new AppServerClient(backendUrl, sharedToken, (notification) => {
         if (!isActive) {
           return;
         }
@@ -182,24 +181,7 @@ export function ToolsScreen() {
         void client.close();
       }
     };
-  }, [backendUrl, mode, sessionToken]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!sessionToken) {
-        return;
-      }
-
-      void (async () => {
-        try {
-          const status = await getAppServerStatus(backendUrl, sessionToken);
-          setBackendWorkspaceRoot(status.workspace_root);
-        } catch {
-          // Best effort only.
-        }
-      })();
-    }, [backendUrl, sessionToken]),
-  );
+  }, [backendUrl, mode, sessionToken, sharedToken]);
 
   const loadCommandCenterSurface = useCallback(async (targetMode: ToolsMode = mode) => {
     if (!sessionToken || !isCommandCenterMode(targetMode)) {
@@ -213,7 +195,7 @@ export function ToolsScreen() {
       setIsLoadingSurface(true);
       setSurfaceError(null);
       const result = await withTimeout(
-        withAppServerClient(backendUrl, sessionToken, async (client) => {
+        withAppServerClient(backendUrl, sharedToken, async (client) => {
           switch (targetMode) {
             case "apps":
               return { mode: targetMode, data: await client.listApps({ limit: 50, forceRefetch: false }) };
@@ -269,7 +251,7 @@ export function ToolsScreen() {
         setIsLoadingSurface(false);
       }
     }
-  }, [backendUrl, mode, sessionToken, workspaceRoot]);
+  }, [backendUrl, mode, sessionToken, sharedToken, workspaceRoot]);
 
   useEffect(() => {
     if (!sessionToken || !isCommandCenterMode(mode)) {
@@ -362,7 +344,7 @@ export function ToolsScreen() {
     try {
       setIsBusy(true);
       setError(null);
-      const result = await withAppServerClient(backendUrl, sessionToken, async (client) => {
+      const result = await withAppServerClient(backendUrl, sharedToken, async (client) => {
         return await client.fuzzyFileSearch(searchQuery.trim(), [workspaceRoot]);
       });
       setSearchResults(
@@ -420,7 +402,7 @@ export function ToolsScreen() {
       setIsLoadingSurface(true);
       setSurfaceError(null);
       setSurfaceNotice(null);
-      await withAppServerClient(backendUrl, sessionToken, async (client) => {
+      await withAppServerClient(backendUrl, sharedToken, async (client) => {
         if (action === "install") {
           await client.installPlugin(first, second);
           return;
@@ -511,7 +493,7 @@ export function ToolsScreen() {
       </View>
       {toolsGroup === "command-center" ? (
         <InlineNotice>
-          Plugins, apps, skills, MCP, config, and experiments are read from the desktop App Server.
+          Plugins, apps, skills, MCP, config, and experiments are read from the official Codex App Server.
         </InlineNotice>
       ) : null}
       <Text style={styles.meta}>Workspace source: {workspaceSourceText}</Text>
@@ -522,8 +504,8 @@ export function ToolsScreen() {
       <Text style={styles.meta}>Workspace label: {workspaceTarget.label}</Text>
       {sessionRestoreState === "reconnecting" ? (
         <InlineNotice tone="error">
-          The saved phone app session is being kept locally, but the backend is currently unreachable.
-          Retry once the desktop server is available again.
+          The saved phone app connection is being kept locally, but the Codex remote endpoint is currently unreachable.
+          Retry once remote control is available again.
         </InlineNotice>
       ) : null}
       {sessionRestoreState === "reconnecting" ? (

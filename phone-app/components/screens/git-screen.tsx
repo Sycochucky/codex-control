@@ -5,7 +5,6 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { ScreenShell } from "@/components/screen-shell";
 import { InlineNotice, LabeledInput, PillButton, PrimaryButton, SecondaryButton } from "@/components/ui";
 import type { ThemeColors } from "@/constants/theme";
-import { getSetupStatus } from "@/services/api";
 import { useSession } from "@/services/session-context";
 import { useThemedStyles } from "@/services/theme-context";
 import type { AppThread } from "@/types/app-server";
@@ -48,6 +47,7 @@ export function GitScreen() {
     selectedWorkspaceLabel,
     selectedWorkspacePath,
     setSelectedWorkspace,
+    sharedToken,
     sessionToken,
   } = useSession();
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
@@ -113,7 +113,7 @@ export function GitScreen() {
       ? selectedSourceThreadId
         ? `Sticky selection from thread ${selectedSourceThreadId}`
         : "Sticky workspace selection"
-      : "Backend default";
+      : "No workspace selected";
 
   const parsedStatus = useMemo(() => parseGitStatus(statusText), [statusText]);
   const hasOrigin = Boolean(originUrl);
@@ -215,7 +215,7 @@ export function GitScreen() {
     try {
       setIsLoadingWorkspaces(true);
       setWorkspaceLoadError(null);
-      const threads = await withWarmAppServerClient(backendUrl, sessionToken, async (client) => {
+      const threads = await withWarmAppServerClient(backendUrl, sharedToken, async (client) => {
         const [activeThreads, archivedThreads] = await Promise.all([
           client.listAllThreads({ archived: false }),
           client.listAllThreads({ archived: true }),
@@ -234,7 +234,7 @@ export function GitScreen() {
     } finally {
       setIsLoadingWorkspaces(false);
     }
-  }, [backendUrl, sessionToken]);
+  }, [backendUrl, sessionToken, sharedToken]);
 
   const loadCommandState = useCallback(async (cwd: string, requestId: number) => {
     if (!sessionToken) {
@@ -248,7 +248,7 @@ export function GitScreen() {
       commitsResult,
       diffResult,
       stagedDiffResult,
-    ] = await withWarmAppServerClient(backendUrl, sessionToken, async (client) => {
+    ] = await withWarmAppServerClient(backendUrl, sharedToken, async (client) => {
       const statusResult = await client.execCommand({
         command: ["git", "status", "--short", "--branch"],
         cwd,
@@ -306,7 +306,7 @@ export function GitScreen() {
       setError(getCombinedCommandOutput(firstFailure) || "Some git details could not be loaded.");
     }
     return true;
-  }, [backendUrl, sessionToken]);
+  }, [backendUrl, sessionToken, sharedToken]);
 
   const loadGit = useCallback(async () => {
     const requestId = gitLoadRequestIdRef.current + 1;
@@ -336,41 +336,14 @@ export function GitScreen() {
 
         const repoRootResult = await runBufferedCommand(
           backendUrl,
-          sessionToken,
+          sharedToken,
           ["git", "rev-parse", "--show-toplevel"],
           activeWorkspacePath,
         );
 
         if (repoRootResult.exitCode !== 0) {
-          if (selectedWorkspaceSource !== "default") {
-            setWorkspaceNotice(
-              selectedWorkspaceSource === "selected"
-                ? "The saved workspace is no longer available. Falling back to backend default workspace."
-                : "The requested thread/project workspace is unavailable. Falling back to backend default workspace.",
-            );
-          }
-          const setup = await getSetupStatus(backendUrl, sessionToken);
-          if (requestId !== gitLoadRequestIdRef.current) {
-            return;
-          }
-          const configuredWorkspace = setup.repo.workspace_root;
-          const resolvedRepoRoot = setup.repo.repo_root;
-          const isRepoRootMatch = setup.repo.workspace_is_repo_root;
-
-          setWorkspaceRoot(configuredWorkspace);
-          setRepoRoot(resolvedRepoRoot);
-          setWorkspaceIsRepoRoot(isRepoRootMatch);
-          setOriginUrl(setup.repo.origin_url ?? null);
-
-          if (!setup.repo.is_git_repository || !resolvedRepoRoot) {
-            setDiffStat("");
-            setError(
-              getCombinedCommandOutput(repoRootResult) || "The selected folder is not inside a Git repository.",
-            );
-            return;
-          }
-
-          await loadCommandState(resolvedRepoRoot, requestId);
+          setDiffStat("");
+          setError(getCombinedCommandOutput(repoRootResult) || "The selected folder is not inside a Git repository.");
           return;
         }
 
@@ -390,42 +363,12 @@ export function GitScreen() {
         return;
       }
 
-      const setup = await getSetupStatus(backendUrl, sessionToken);
-      if (requestId !== gitLoadRequestIdRef.current) {
-        return;
-      }
-      const configuredWorkspace = setup.repo.workspace_root;
-      const resolvedRepoRoot = setup.repo.repo_root;
-      const isRepoRootMatch = setup.repo.workspace_is_repo_root;
-
-      setWorkspaceRoot(configuredWorkspace);
-      setRepoRoot(resolvedRepoRoot);
-      setWorkspaceIsRepoRoot(isRepoRootMatch);
-      setOriginUrl(setup.repo.origin_url ?? null);
-
-      if (!setup.repo.is_git_repository || !resolvedRepoRoot) {
-        setStatusText("");
-        setBranches([]);
-        setCommits([]);
-        setDiffStat("");
-        setStagedDiffStat("");
-        setError("The configured workspace is not inside a Git repository.");
-        return;
-      }
-
-      if (!isRepoRootMatch) {
-        setStatusText("");
-        setBranches([]);
-        setCommits([]);
-        setDiffStat("");
-        setStagedDiffStat("");
-        setError(
-          `Git resolves to ${resolvedRepoRoot}, not ${configuredWorkspace}. Git actions are disabled until the configured workspace matches the repo root.`,
-        );
-        return;
-      }
-
-      await loadCommandState(resolvedRepoRoot, requestId);
+      setStatusText("");
+      setBranches([]);
+      setCommits([]);
+      setDiffStat("");
+      setStagedDiffStat("");
+      setError("Select a project workspace from a thread or enter a manual workspace before using Git actions.");
     } catch (loadError) {
       if (requestId === gitLoadRequestIdRef.current) {
         setError(getFriendlyNetworkErrorMessage(loadError, "Failed to load git workspace details."));
@@ -435,7 +378,7 @@ export function GitScreen() {
         setIsLoading(false);
       }
     }
-  }, [activeWorkspacePath, backendUrl, loadCommandState, selectedWorkspaceSource, sessionToken]);
+  }, [activeWorkspacePath, backendUrl, loadCommandState, sessionToken, sharedToken]);
 
   useFocusEffect(
     useCallback(() => {
@@ -462,7 +405,7 @@ export function GitScreen() {
     try {
       setIsRunningAction(true);
       setError(null);
-      const result = await runBufferedCommand(backendUrl, sessionToken, command, commandWorkspace, 60000);
+      const result = await runBufferedCommand(backendUrl, sharedToken, command, commandWorkspace, 60000);
       setActionOutput(getCombinedCommandOutput(result));
       if (result.exitCode !== 0) {
         throw new Error(getCombinedCommandOutput(result) || "Git action failed.");
@@ -480,7 +423,7 @@ export function GitScreen() {
       throw new Error("Session is not connected.");
     }
 
-    const result = await runBufferedCommand(backendUrl, sessionToken, command, cwd, timeoutMs);
+    const result = await runBufferedCommand(backendUrl, sharedToken, command, cwd, timeoutMs);
     const output = getCombinedCommandOutput(result);
     if (result.exitCode !== 0) {
       throw new Error(output || "Git setup command failed.");

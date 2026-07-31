@@ -6,6 +6,7 @@ import {
   CreatedThreadError,
   mergeThreadListPages,
   textInput,
+  toAppServerWsUrl,
   withAppServerClient,
 } from "../services/app-server";
 import { buildComposerInput, createImageDataUrl } from "../utils/composer-input";
@@ -14,6 +15,76 @@ import { getSessionValidationOutcome } from "../utils/session-restore";
 test("getSessionValidationOutcome only treats 401 as invalid", () => {
   assert.equal(getSessionValidationOutcome({ status: 401 }), "invalid");
   assert.equal(getSessionValidationOutcome({ status: 500 }), "retryable");
+});
+
+test("toAppServerWsUrl targets the official App Server endpoint directly", () => {
+  assert.equal(toAppServerWsUrl("ws://127.0.0.1:8765"), "ws://127.0.0.1:8765/ws");
+  assert.equal(toAppServerWsUrl("wss://remote.example.com/codex"), "wss://remote.example.com/codex/ws");
+  assert.equal(toAppServerWsUrl("http://127.0.0.1:8765/"), "ws://127.0.0.1:8765/ws");
+  assert.equal(toAppServerWsUrl("https://remote.example.com/codex/ws"), "wss://remote.example.com/codex/ws");
+  assert.equal(toAppServerWsUrl("https://remote.example.com/codex"), "wss://remote.example.com/codex/ws");
+  assert.doesNotMatch(toAppServerWsUrl("http://127.0.0.1:8765"), /app-server\/ws|token=/);
+});
+
+test("AppServerClient passes bearer auth as websocket headers when configured", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets: FakeWebSocket[] = [];
+
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly url: string;
+    readonly protocols: string | string[] | undefined;
+    readonly options: unknown;
+    readyState = FakeWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: ((event: { reason?: string }) => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor(url: string, protocols?: string | string[], options?: unknown) {
+      this.url = url;
+      this.protocols = protocols;
+      this.options = options;
+      sockets.push(this);
+    }
+
+    send(payload: string) {
+      const parsed = JSON.parse(payload) as { id?: string | number; method?: string };
+      if (parsed.method === "initialize" && parsed.id !== undefined) {
+        this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: {} }) });
+      }
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ reason: "" });
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+  try {
+    const client = new AppServerClient("http://127.0.0.1:8765", "capability-token");
+    const socket = sockets[0];
+    assert.ok(socket);
+    assert.equal(socket.url, "ws://127.0.0.1:8765/ws");
+    assert.deepEqual(socket.options, { headers: { Authorization: "Bearer capability-token" } });
+
+    const connectPromise = client.connect();
+    socket.open();
+    await connectPromise;
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
 });
 
 test("mergeThreadListPages keeps the newest repeated thread", () => {
